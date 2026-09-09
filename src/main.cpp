@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "sensor.h"
 #include "telemetry.h"
+#include "motor.h"
 
 void setup() {
     Serial.begin(115200);
@@ -11,6 +12,10 @@ void setup() {
     if (!sensor_init()) {
         Serial.println("[MAIN] one or more ToF sensors failed to init");
     }
+
+    motor_init();
+    // Motors are initialized but held stopped here — drive logic
+    // (maze-solving, wall following, etc.) isn't wired in yet.
 }
 
 void loop() {

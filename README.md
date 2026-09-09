@@ -24,6 +24,14 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
   - Right: GPIO 19
   - Left: GPIO 5
 - I2C bus: SDA = GPIO 21, SCL = GPIO 22
+- TB6612FNG-style dual motor driver:
+  - Motor A: PWM = GPIO 26, IN1 = GPIO 25, IN2 = GPIO 33
+  - Motor B: PWM = GPIO 27, IN1 = GPIO 14, IN2 = GPIO 32
+  - STBY is assumed tied high in hardware (not software controlled)
+
+  Note: GPIO34/35 are input-only on the ESP32 and can't drive PWM or a
+  direction pin — if you see those referenced anywhere for motor B, they're
+  wrong; the pins above are what's actually wired.
 
 ## Code structure
 
@@ -31,9 +39,11 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
 include/
   sensor.h       # public C-style API for the ToF sensor module
   telemetry.h    # public C-style API for the serial telemetry module
+  motor.h        # public C-style API for the motor driver module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
   telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
+  motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
 matlab/
@@ -53,9 +63,17 @@ matlab/
   machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
   kept separate from the `[SENSOR]` debug logs so a host tool can filter for
   `DATA,` lines and ignore the rest. Used by `matlab/live_tof_plot.m`.
-- **`main.cpp`** is intentionally minimal: it initializes serial + the sensor
-  module in `setup()`, then each loop reads all three sensors and sends the
-  reading out over telemetry.
+- **`motor.h`** declares the motor module's public interface:
+  `motor_id_t` (`MOTOR_A`/`MOTOR_B`), pin constants, `motor_init()`,
+  `motor_set_speed(motor, speed)` (-255..255, negative = reverse), and
+  `motor_stop_all()`.
+- **`motor.cpp`** sets up each motor's direction pins as digital outputs and
+  its PWM (speed) pin via the ESP32's LEDC peripheral (20kHz, 8-bit duty),
+  and logs every init/speed change (`[MOTOR] ...`).
+- **`main.cpp`** is intentionally minimal: it initializes serial, the sensor
+  module, and the motor module in `setup()` (motors start stopped — no drive
+  logic is wired in yet), then each loop reads all three sensors and sends
+  the reading out over telemetry.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
