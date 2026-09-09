@@ -32,6 +32,11 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
   Note: GPIO34/35 are input-only on the ESP32 and can't drive PWM or a
   direction pin — if you see those referenced anywhere for motor B, they're
   wrong; the pins above are what's actually wired.
+- Battery voltage divider on GPIO 34 (ADC1, input-only — a natural fit for
+  an analog input): R1 = 14.1kΩ (battery+ to ADC pin), R2 = 9.4kΩ (ADC pin
+  to GND), giving a divider ratio of 0.4 — a 3.7V nominal cell (up to 4.2V
+  charged) reads back as ~1.2-1.7V at the ADC pin, comfortably inside the
+  ESP32's 0-3.3V range.
 
 ## Code structure
 
@@ -41,11 +46,13 @@ include/
   telemetry.h    # public C-style API for the serial telemetry module
   motor.h        # public C-style API for the motor driver module
   drive.h        # public C-style API for the simple movement module
+  battery.h      # public C-style API for the battery voltage module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
   telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   drive.cpp      # simple forward/turn movement built on the motor module
+  battery.cpp    # battery voltage divider reading over ADC
   main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
 matlab/
@@ -78,13 +85,18 @@ matlab/
   in place), and `drive_stop()`. Left/right-to-Motor-A/B and each wheel's
   polarity are guesses; if a wheel spins the wrong way, flip its sign in
   `drive.cpp` rather than rewiring.
-- **`main.cpp`** initializes serial, the sensor module, and the motor module
-  in `setup()`, then runs a **one-shot motion test on every boot**: forward,
-  pivot left, pivot right, then stop — logged via `[MAIN]`/`[DRIVE]`. Speeds
-  and durations are untuned placeholders. **The robot moves as soon as it's
-  powered on** — place it in a clear area before flashing/resetting it. The
-  main `loop()` is unchanged: it reads all three sensors each iteration and
-  sends the reading out over telemetry.
+- **`battery.h`/`battery.cpp`** read the ADC (8-sample average, `ADC_11db`
+  attenuation for full 0-3.3V range), convert through the known divider
+  ratio, and log the battery voltage (`[BATTERY] ...`) every call, with a
+  warning line if it drops below `BATTERY_LOW_VOLTAGE` (3.3V).
+- **`main.cpp`** initializes serial, the sensor module, the battery module,
+  and the motor module in `setup()`, then runs a **one-shot motion test on
+  every boot**: forward, pivot left, pivot right, then stop — logged via
+  `[MAIN]`/`[DRIVE]`. Speeds and durations are untuned placeholders. **The
+  robot moves as soon as it's powered on** — place it in a clear area before
+  flashing/resetting it. The main `loop()` reads all three sensors and the
+  battery voltage each iteration and sends the sensor reading out over
+  telemetry.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C

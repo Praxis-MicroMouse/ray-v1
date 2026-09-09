@@ -3,6 +3,7 @@
 #include "telemetry.h"
 #include "motor.h"
 #include "drive.h"
+#include "battery.h"
 
 void setup() {
     Serial.begin(115200);
@@ -13,6 +14,9 @@ void setup() {
     if (!sensor_init()) {
         Serial.println("[MAIN] one or more ToF sensors failed to init");
     }
+
+    battery_init();
+    battery_read_voltage();
 
     motor_init();
 
@@ -41,6 +45,7 @@ void loop() {
     sensor_reading_t reading;
     sensor_read_all(&reading);
     telemetry_send(&reading);
+    battery_read_voltage();
 
     // High-accuracy ranging already takes ~200ms per sensor (~600ms/loop),
     // so no extra delay is needed to keep the bus/host happy.
