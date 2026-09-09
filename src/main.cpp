@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "sensor.h"
+#include "telemetry.h"
 
 void setup() {
     Serial.begin(115200);
@@ -15,6 +16,7 @@ void setup() {
 void loop() {
     sensor_reading_t reading;
     sensor_read_all(&reading);
+    telemetry_send(&reading);
 
-    delay(200);
+    delay(50);
 }

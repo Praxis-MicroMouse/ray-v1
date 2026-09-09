@@ -30,10 +30,14 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
 ```
 include/
   sensor.h       # public C-style API for the ToF sensor module
+  telemetry.h    # public C-style API for the serial telemetry module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
-  main.cpp       # setup()/loop() — initializes and calls the sensor module
+  telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
+  main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
+matlab/
+  live_tof_plot.m  # live-plots the streamed sensor readings, for tuning
 ```
 
 - **`sensor.h`** declares the sensor module's public interface: pin/address
@@ -44,8 +48,13 @@ platformio.ini   # board/framework config + library dependencies
   address (they'd otherwise collide on the shared bus), and reads distances via
   the Adafruit VL53L0X library. Every step logs to serial (`[SENSOR] ...`) for
   debugging.
+- **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
+  machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
+  kept separate from the `[SENSOR]` debug logs so a host tool can filter for
+  `DATA,` lines and ignore the rest. Used by `matlab/live_tof_plot.m`.
 - **`main.cpp`** is intentionally minimal: it initializes serial + the sensor
-  module in `setup()`, then reads and logs all three sensors in `loop()`.
+  module in `setup()`, then each loop reads all three sensors and sends the
+  reading out over telemetry.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
@@ -59,3 +68,21 @@ pio run          # build
 pio run -t upload   # flash to the board
 pio device monitor  # view serial logs (115200 baud)
 ```
+
+## Live-plotting sensor data in MATLAB
+
+For fine-tuning sensor placement/mounting, `matlab/live_tof_plot.m` opens the
+board's serial port, reads the `DATA,...` telemetry lines, and live-plots
+front/right/left distance over time.
+
+1. Flash and connect the board (`pio run -t upload`), then **close** any open
+   `pio device monitor`/serial terminal — only one program can hold the serial
+   port at a time.
+2. Open `matlab/live_tof_plot.m` in MATLAB and set `PORT_NAME` at the top
+   (run `serialportlist("available")` in MATLAB if you're not sure which port
+   it is — on Linux it's usually `/dev/ttyUSB0` or `/dev/ttyACM0`).
+3. Run the script. A plot window opens and updates live; close the window to
+   stop.
+
+Requires MATLAB R2019b or newer (uses the built-in `serialport` object — no
+Instrument Control Toolbox needed).
