@@ -46,8 +46,9 @@ matlab/
 - **`sensor.cpp`** contains the implementation: it resets all three sensors via
   XSHUT, brings them up one at a time so each can be assigned a unique I2C
   address (they'd otherwise collide on the shared bus), and reads distances via
-  the Adafruit VL53L0X library. Every step logs to serial (`[SENSOR] ...`) for
-  debugging.
+  the Adafruit VL53L0X library in its `HIGH_ACCURACY` profile (longer timing
+  budget, lower noise — matters most at the short 0-10cm ranges used for
+  tuning). Every step logs to serial (`[SENSOR] ...`) for debugging.
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
   machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
   kept separate from the `[SENSOR]` debug logs so a host tool can filter for
@@ -73,7 +74,9 @@ pio device monitor  # view serial logs (115200 baud)
 
 For fine-tuning sensor placement/mounting, `matlab/live_tof_plot.m` opens the
 board's serial port, reads the `DATA,...` telemetry lines, and live-plots
-front/right/left distance over time.
+front/right/left distance over time. The plot is zoomed to a 0-10cm axis with
+0.5cm gridlines and per-sample markers, since that's the near-field range
+that matters for placement tuning.
 
 1. Flash and connect the board (`pio run -t upload`), then **close** any open
    `pio device monitor`/serial terminal — only one program can hold the serial

@@ -18,5 +18,7 @@ void loop() {
     sensor_read_all(&reading);
     telemetry_send(&reading);
 
-    delay(50);
+    // High-accuracy ranging already takes ~200ms per sensor (~600ms/loop),
+    // so no extra delay is needed to keep the bus/host happy.
+    delay(10);
 }

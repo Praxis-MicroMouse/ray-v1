@@ -33,18 +33,25 @@ configureTerminator(port, "LF");
 flush(port);
 
 %% --- Plot setup ---
+% Zoomed to the 0-10cm near-field range (fine-tuning sensor placement
+% happens at close range, where mm-scale noise matters most).
 fig = figure('Name', 'Live ToF Sensor Readings', 'NumberTitle', 'off');
 ax = axes(fig);
 hold(ax, 'on');
 grid(ax, 'on');
+ax.YMinorGrid = 'on';
 xlabel(ax, 'Time (s)');
-ylabel(ax, 'Distance (mm)');
-title(ax, 'Front / Right / Left ToF Distance');
-ylim(ax, [0 2000]);  % matches SENSOR_MAX_RANGE_MM in sensor.h
+ylabel(ax, 'Distance (cm)');
+title(ax, 'Front / Right / Left ToF Distance (0-10cm)');
+ylim(ax, [0 10]);
+yticks(ax, 0:0.5:10);  % 0.5cm gridlines for a detailed near-field view
 
-lineFront = animatedline(ax, 'Color', [0.85 0.10 0.10], 'DisplayName', 'Front');
-lineRight = animatedline(ax, 'Color', [0.10 0.55 0.85], 'DisplayName', 'Right');
-lineLeft  = animatedline(ax, 'Color', [0.10 0.70 0.30], 'DisplayName', 'Left');
+lineFront = animatedline(ax, 'Color', [0.85 0.10 0.10], 'DisplayName', 'Front', ...
+    'Marker', '.', 'MarkerSize', 10);
+lineRight = animatedline(ax, 'Color', [0.10 0.55 0.85], 'DisplayName', 'Right', ...
+    'Marker', '.', 'MarkerSize', 10);
+lineLeft  = animatedline(ax, 'Color', [0.10 0.70 0.30], 'DisplayName', 'Left', ...
+    'Marker', '.', 'MarkerSize', 10);
 legend(ax, 'show', 'Location', 'northeastoutside');
 
 cleanupObj = onCleanup(@() cleanupSerial(port)); %#ok<NASGU>
@@ -69,13 +76,13 @@ while isvalid(fig) && isgraphics(fig)
     end
 
     t = toc(t0);
-    front_mm = fields(2);
-    right_mm = fields(3);
-    left_mm  = fields(4);
+    front_cm = fields(2) / 10;
+    right_cm = fields(3) / 10;
+    left_cm  = fields(4) / 10;
 
-    addpoints(lineFront, t, front_mm);
-    addpoints(lineRight, t, right_mm);
-    addpoints(lineLeft,  t, left_mm);
+    addpoints(lineFront, t, front_cm);
+    addpoints(lineRight, t, right_cm);
+    addpoints(lineLeft,  t, left_cm);
 
     xlim(ax, [max(0, t - WINDOW_SEC), max(WINDOW_SEC, t)]);
     drawnow limitrate;

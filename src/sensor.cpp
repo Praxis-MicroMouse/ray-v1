@@ -35,7 +35,11 @@ bool sensor_init(void) {
         digitalWrite(s_xshut_pin[i], HIGH);
         delay(10);
 
-        if (!s_tof[i].begin(SENSOR_I2C_ADDR_BASE + i)) {
+        // High-accuracy profile: longer timing budget, tighter VCSEL
+        // periods -> lower noise, which matters most at short (0-10cm)
+        // range where we're fine-tuning sensor placement.
+        if (!s_tof[i].begin(SENSOR_I2C_ADDR_BASE + i, false, &Wire,
+                             Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY)) {
             Serial.printf("[SENSOR] %s init FAILED (xshut=%d)\n",
                           s_name[i], s_xshut_pin[i]);
             all_ok = false;
