@@ -1,0 +1,24 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+# Build artifacts
+*.o
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+
+# VSCode (keep extensions.json, ignore machine-specific config)
+.vscode/*
+!.vscode/extensions.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
