@@ -40,10 +40,12 @@ include/
   sensor.h       # public C-style API for the ToF sensor module
   telemetry.h    # public C-style API for the serial telemetry module
   motor.h        # public C-style API for the motor driver module
+  drive.h        # public C-style API for the simple movement module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
   telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
+  drive.cpp      # simple forward/turn movement built on the motor module
   main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
 matlab/
@@ -70,10 +72,19 @@ matlab/
 - **`motor.cpp`** sets up each motor's direction pins as digital outputs and
   its PWM (speed) pin via the ESP32's LEDC peripheral (20kHz, 8-bit duty),
   and logs every init/speed change (`[MOTOR] ...`).
-- **`main.cpp`** is intentionally minimal: it initializes serial, the sensor
-  module, and the motor module in `setup()` (motors start stopped — no drive
-  logic is wired in yet), then each loop reads all three sensors and sends
-  the reading out over telemetry.
+- **`drive.h`/`drive.cpp`** implement simple two-wheel differential drive on
+  top of `motor`: `drive_forward(speed)`, `drive_turn_left(speed)` /
+  `drive_turn_right(speed)` (pivot turns — wheels spin opposite directions
+  in place), and `drive_stop()`. Left/right-to-Motor-A/B and each wheel's
+  polarity are guesses; if a wheel spins the wrong way, flip its sign in
+  `drive.cpp` rather than rewiring.
+- **`main.cpp`** initializes serial, the sensor module, and the motor module
+  in `setup()`, then runs a **one-shot motion test on every boot**: forward,
+  pivot left, pivot right, then stop — logged via `[MAIN]`/`[DRIVE]`. Speeds
+  and durations are untuned placeholders. **The robot moves as soon as it's
+  powered on** — place it in a clear area before flashing/resetting it. The
+  main `loop()` is unchanged: it reads all three sensors each iteration and
+  sends the reading out over telemetry.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C

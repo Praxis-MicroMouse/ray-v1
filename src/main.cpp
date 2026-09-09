@@ -2,6 +2,7 @@
 #include "sensor.h"
 #include "telemetry.h"
 #include "motor.h"
+#include "drive.h"
 
 void setup() {
     Serial.begin(115200);
@@ -14,8 +15,26 @@ void setup() {
     }
 
     motor_init();
-    // Motors are initialized but held stopped here — drive logic
-    // (maze-solving, wall following, etc.) isn't wired in yet.
+
+    // One-shot motion test: forward, then a pivot turn each way, then
+    // stop. Robot WILL move on boot — place it in a clear area before
+    // powering on. Speeds/durations are untuned guesses; adjust once
+    // you've seen how it actually moves.
+    Serial.println("[MAIN] motion test starting...");
+    drive_forward(DRIVE_DEFAULT_SPEED);
+    delay(800);
+    drive_stop();
+    delay(500);
+
+    drive_turn_left(DRIVE_DEFAULT_SPEED);
+    delay(400);
+    drive_stop();
+    delay(500);
+
+    drive_turn_right(DRIVE_DEFAULT_SPEED);
+    delay(400);
+    drive_stop();
+    Serial.println("[MAIN] motion test done");
 }
 
 void loop() {
