@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #include "encoder.h"
+#include "motor.h"
 
 // Concrete PID-driven control loops built on pid.h + drive.h/motor.h +
 // encoder.h/sensor.h/mpu9250.h. Each loop's gains are tunable at runtime
@@ -23,6 +24,10 @@
 // Hard safety ceiling on any single RUN maneuver, regardless of whether
 // it reaches its target - guards against a bad gain set driving forever.
 #define CONTROL_MAX_RUN_MS 5000
+
+// Longer ceiling for control_run_spin() below, which is meant to be held
+// steady long enough to time output-shaft rotations by hand.
+#define CONTROL_SPIN_MAX_RUN_MS 60000
 
 typedef enum {
     CONTROL_LOOP_STRAIGHT = 0,  // dual-wheel encoder speed sync while driving forward
@@ -61,6 +66,17 @@ float control_ticks_to_mm(int32_t ticks);
 void control_run_straight(float target_mm, int16_t base_speed, control_tick_cb_t tick_cb);
 void control_run_turn(float target_deg, int16_t base_speed, control_tick_cb_t tick_cb);
 void control_run_wallcenter(uint32_t duration_ms, int16_t base_speed, control_tick_cb_t tick_cb);
+
+// Open-loop "just spin this motor and hold" test - no PID, no target,
+// not tied to a CONTROL_LOOP_* id. Meant for benchtop comparisons: e.g.
+// timing output-shaft rotations by hand (mark the wheel, stopwatch) to
+// check that two candidate motors have matching gearbox ratios, which
+// encoder_get_motor_rpm() alone can't reveal - the encoder sits on the
+// motor shaft, before the gearbox, so it only sees the bare motor's free
+// speed, not what the gearbox does to it. Runs at a constant `pwm`
+// (signed, -255..255) until control_request_abort() or
+// CONTROL_SPIN_MAX_RUN_MS, whichever comes first.
+void control_run_spin(motor_id_t motor, int16_t pwm, control_tick_cb_t tick_cb);
 
 // Most recent debug snapshot (setpoint/measurement/output) of whichever
 // loop last ran, for telemetry - valid even after the maneuver ends

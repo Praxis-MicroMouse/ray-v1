@@ -188,3 +188,22 @@ void control_run_wallcenter(uint32_t duration_ms, int16_t base_speed, control_ti
     drive_stop();
     s_debug.active = false;
 }
+
+void control_run_spin(motor_id_t motor, int16_t pwm, control_tick_cb_t tick_cb) {
+    s_abort = false;
+    motor_set_speed(motor, pwm);
+
+    uint32_t start_ms = millis();
+    uint32_t last_ms = start_ms;
+
+    while (!s_abort) {
+        uint32_t now = millis();
+        if (now - start_ms > CONTROL_SPIN_MAX_RUN_MS) break;
+        if (now - last_ms < CONTROL_DT_MS) { delay(1); continue; }
+        last_ms = now;
+
+        if (tick_cb) tick_cb();
+    }
+
+    motor_set_speed(motor, 0);
+}

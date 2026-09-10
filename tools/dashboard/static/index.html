@@ -172,6 +172,29 @@
   </div>
 
   <div class="panel">
+    <h2>Motor Spin Test</h2>
+    <p class="small-note">
+      Open-loop: holds one motor at a fixed PWM (no PID, no target) so you
+      can time <strong>output-shaft</strong> rotations by hand (mark the
+      wheel, use a stopwatch) - the RPM panel above only measures the
+      motor shaft, <em>before</em> the gearbox, so it can't by itself
+      reveal two motors having different gearbox ratios. Runs up to 60s,
+      or until Stop.
+    </p>
+    <div class="btn-row">
+      <input type="number" id="spinPwmL" value="150" style="width:100px">
+      <button id="spinLBtn">Spin Left</button>
+    </div>
+    <div class="btn-row">
+      <input type="number" id="spinPwmR" value="150" style="width:100px">
+      <button id="spinRBtn">Spin Right</button>
+    </div>
+    <div class="btn-row">
+      <button id="spinStopBtn" class="danger">Stop</button>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Motor PWM (speed)</h2>
     <div class="stat-row"><span class="label">Left</span><span class="value" id="pwmLVal">0</span></div>
     <div class="pwm-bar"><div class="pwm-bar-zero"></div><div class="pwm-bar-fill" id="pwmLFill"></div></div>
@@ -522,6 +545,24 @@ document.getElementById("runBtn").onclick = () => {
 };
 
 document.getElementById("stopBtn").onclick = () => {
+  sendLine("RUN stop");
+  log("RUN stop");
+};
+
+// ---------- motor spin test (open-loop, for benchtop gearbox-ratio checks) ----------
+document.getElementById("spinLBtn").onclick = () => {
+  const pwm = document.getElementById("spinPwmL").value || "0";
+  sendLine(`RUN spinl ${pwm}`);
+  log(`RUN spinl ${pwm}`);
+};
+
+document.getElementById("spinRBtn").onclick = () => {
+  const pwm = document.getElementById("spinPwmR").value || "0";
+  sendLine(`RUN spinr ${pwm}`);
+  log(`RUN spinr ${pwm}`);
+};
+
+document.getElementById("spinStopBtn").onclick = () => {
   sendLine("RUN stop");
   log("RUN stop");
 };

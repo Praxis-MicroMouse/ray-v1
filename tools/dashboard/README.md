@@ -56,6 +56,16 @@ Then open **http://127.0.0.1:5055**.
   from `motor_get_speed()`) — useful for sanity-checking that a PID
   loop's output is doing something sane before trusting its
   setpoint-vs-measured numbers.
+- **Motor Spin Test**: holds one motor at a fixed PWM, open-loop, with no
+  PID and no target (up to 60s, or until Stop) — for comparing candidate
+  motors on the bench. Since the RPM panel measures the motor shaft
+  *before* the gearbox, two motors can show identical motor RPM there and
+  still have different gearbox ratios; to actually confirm two motors'
+  **output**-shaft speed matches (and so their gearbox ratios match, for
+  same-model motors), mark the wheel/output shaft on each candidate, spin
+  it here at a fixed PWM, and time output rotations with a stopwatch —
+  compare that timing across candidates directly, independent of what the
+  RPM panel or `ENCODER_GEARBOX_RATIO` say.
 - **PID tuning**: pick a loop tab (straight/turn/wallcenter), read the
   firmware's current gains ("Read from firmware"), adjust Kp/Ki/Kd and
   "Set gains", then "Run" a test maneuver with an argument (straight =

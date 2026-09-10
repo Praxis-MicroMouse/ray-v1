@@ -10,10 +10,14 @@
 // Incoming commands (one per line, newline-terminated):
 //   PID <loop> <kp> <ki> <kd>   - loop in {straight, turn, wallcenter}
 //   GETPID <loop>               - firmware replies with one {"pidcfg":...} line
-//   RUN <maneuver> <arg>        - maneuver in {straight, turn, wallcenter, stop}
+//   RUN <maneuver> <arg>        - maneuver in {straight, turn, wallcenter, spinl, spinr, stop}
 //                                   straight's arg    = target distance, mm
 //                                   turn's arg        = target angle, degrees
 //                                   wallcenter's arg  = duration, ms
+//                                   spinl/spinr's arg = signed PWM (-255..255) - open-loop,
+//                                     holds one motor at a constant speed (no PID, no target,
+//                                     up to CONTROL_SPIN_MAX_RUN_MS) for benchtop tests like
+//                                     timing output-shaft rotations by hand - see control.h
 //                                   stop takes no arg and aborts an in-progress RUN
 //
 // Outgoing telemetry (one JSON object per line - roughly every

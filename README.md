@@ -198,11 +198,25 @@ tools/
     (`control_run_turn(target_deg, ...)`).
   - `CONTROL_LOOP_WALLCENTER` — ToF left/right centering while driving
     forward (`control_run_wallcenter(duration_ms, ...)`).
-  Each `control_run_*()` blocks until its maneuver finishes, hits a hard
-  `CONTROL_MAX_RUN_MS` (5s) safety timeout, or `control_request_abort()` is
-  called — and calls a `tick_cb` every ~10ms so the caller (`comms.cpp`)
-  can stream telemetry and poll for that abort request while the maneuver
-  runs. `WHEEL_DIAMETER_MM` is a measured-by-hand guess (tune it); its
+
+  Plus one open-loop maneuver not tied to a PID loop:
+  `control_run_spin(motor, pwm, ...)` just holds one motor at a constant
+  PWM (no target, no closed-loop correction) for up to
+  `CONTROL_SPIN_MAX_RUN_MS` (60s) — meant for benchtop tests like timing
+  **output-shaft** rotations by hand (mark the wheel, use a stopwatch) to
+  check whether two candidate motors have matching gearbox ratios.
+  `encoder_get_motor_rpm()` can't answer that on its own: the encoder is
+  on the motor shaft, *before* the gearbox, so it only sees the bare
+  motor's free speed — two motors can report identical motor RPM and
+  still have different gearbox ratios (a known issue with cheap N20
+  gearmotor batches).
+
+  Each `control_run_*()` blocks until its maneuver finishes, hits its
+  hard safety timeout (`CONTROL_MAX_RUN_MS`, 5s, for the three PID
+  maneuvers above), or `control_request_abort()` is called — and calls a
+  `tick_cb` every ~10ms so the caller (`comms.cpp`) can stream telemetry
+  and poll for that abort request while the maneuver runs.
+  `WHEEL_DIAMETER_MM` is a measured-by-hand guess (tune it); its
   `ENCODER_TICKS_PER_REV` is derived from `encoder.h`'s
   `ENCODER_TICKS_PER_MOTOR_REV` and `ENCODER_GEARBOX_RATIO`, so it's only
   as accurate as that ratio is.

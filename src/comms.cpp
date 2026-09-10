@@ -127,6 +127,10 @@ static void handle_line(char *line) {
             control_run_turn(arg, DRIVE_DEFAULT_SPEED, comms_tick);
         } else if (strcmp(maneuver, "wallcenter") == 0) {
             control_run_wallcenter((uint32_t) arg, DRIVE_DEFAULT_SPEED, comms_tick);
+        } else if (strcmp(maneuver, "spinl") == 0) {
+            control_run_spin(DRIVE_LEFT_MOTOR, (int16_t) arg, comms_tick);
+        } else if (strcmp(maneuver, "spinr") == 0) {
+            control_run_spin(DRIVE_RIGHT_MOTOR, (int16_t) arg, comms_tick);
         }
         return;
     }
