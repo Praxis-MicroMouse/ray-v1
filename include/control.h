@@ -8,15 +8,15 @@
 
 // Concrete PID-driven control loops built on pid.h + drive.h/motor.h +
 // encoder.h/sensor.h/mpu9250.h. Each loop's gains are tunable at runtime
-// (see comms.h for the serial commands that call into this module) so
-// they can be iterated on without reflashing - that's the whole point of
-// the tools/dashboard companion app.
+// via control_set_gains() so they can be iterated on without reflashing.
 //
-// Wheel/encoder geometry - TUNE both once the encoders are physically
-// wired (see encoder.h - its pins are still unset as of this writing, so
-// distance/speed numbers derived from them are meaningless until then).
+// Wheel/encoder geometry.
+// Both measured directly: ENCODER_TICKS_PER_REV via encoder calibration
+// mode method 1 (hand-turn a wheel N full revs, read the tick delta) -
+// averaged 715 ticks/rev across trials. WHEEL_DIAMETER_MM via calipers
+// over the tire - 3.2cm.
 #define WHEEL_DIAMETER_MM     32.0f
-#define ENCODER_TICKS_PER_REV 12.0f
+#define ENCODER_TICKS_PER_REV 715.0f
 
 // Hard safety ceiling on any single RUN maneuver, regardless of whether
 // it reaches its target - guards against a bad gain set driving forever.
@@ -42,9 +42,9 @@ typedef struct {
 } control_debug_t;
 
 // Called once per control-loop iteration (roughly every 10ms) during a
-// RUN maneuver, so the caller (comms.cpp) can send a telemetry line and
-// check for an abort command without control.cpp knowing anything about
-// serial/comms itself.
+// maneuver, so a caller can observe progress (e.g. stream telemetry) and
+// decide whether to call control_request_abort() - pass nullptr if
+// nothing needs to happen mid-maneuver.
 typedef void (*control_tick_cb_t)(void);
 
 void control_init(void);
@@ -59,7 +59,7 @@ float control_ticks_to_mm(int32_t ticks);
 // Runs a maneuver to completion, to CONTROL_MAX_RUN_MS, or until
 // control_request_abort() is called (from within tick_cb, typically).
 // Blocking, by design - the point is to drive the robot through exactly
-// one maneuver at a time while the dashboard watches it happen live.
+// one maneuver at a time.
 void control_run_straight(float target_mm, int16_t base_speed, control_tick_cb_t tick_cb);
 void control_run_turn(float target_deg, int16_t base_speed, control_tick_cb_t tick_cb);
 void control_run_wallcenter(uint32_t duration_ms, int16_t base_speed, control_tick_cb_t tick_cb);

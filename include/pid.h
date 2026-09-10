@@ -4,8 +4,8 @@
 #include <stdbool.h>
 
 // Minimal, generic PID controller. One instance per control loop (see
-// control.h) so gains can be tuned independently, live over serial (see
-// comms.h), without recompiling/reflashing.
+// control.h) so gains can be tuned independently at runtime, without
+// recompiling/reflashing.
 
 typedef struct {
     float kp;

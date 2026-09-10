@@ -9,10 +9,9 @@ time-of-flight (ToF) sensors, drives two motors, reads wheel encoders and
 a 9-DoF IMU, and monitors its own battery. This firmware brings up every
 one of those, plus:
 
-- **PID tuning + telemetry dashboard** (the current default build) — a
-  serial protocol (`comms.h`) plus a companion local web app
-  (`tools/dashboard`) for tuning the robot's control loops and watching
-  every sensor live, on the bench, without reflashing between tweaks.
+- **PID-driven control loops** (`control.h`) — dual-wheel encoder speed
+  sync while driving straight, gyro-integrated heading hold while
+  turning, and ToF-based wall centering, each independently tunable.
 - **Maze solving** — flood fill for exploration and a turn-minimizing
   Dijkstra planner for the speed run, ported from the
   [`mms-c`](../mms-c/Main.c) simulator reference algorithm, runnable
@@ -21,8 +20,13 @@ one of those, plus:
   reimplementation, via `tools/maze_cli`.
 
 The codebase is written to be modular: each piece of hardware/functionality
-gets its own header + implementation pair, and `main` just wires the
-modules together.
+gets its own header + implementation pair. `main.cpp` wires the modules
+together into a set of build modes (motors-only, drive test, sensor
+telemetry, obstacle avoidance, battery/IMU bring-up, motor PID sync,
+encoder calibration, a one-cell straight-line test, and the two maze
+solver variants) — see the top of `main.cpp` for the `MODE_*` switches
+that select which one gets compiled in. Only one build mode is active at
+a time; flip it there and reflash rather than maintaining separate sketches.
 
 ## Hardware
 
@@ -71,7 +75,6 @@ include/
   mpu9250.h      # public C-style API for the IMU module
   pid.h          # public C-style API for the generic PID controller
   control.h      # public C-style API for the concrete PID-driven control loops
-  comms.h        # public C-style API for the serial telemetry/tuning protocol
   maze.h         # public C-style API for the maze grid + flood-fill/Dijkstra search
   solver.h       # public C-style API for the physical maze-solving run (single task)
   tasks.h        # public C-style API for the dual-core RTOS version of the solver
@@ -86,15 +89,13 @@ src/
   mpu9250.cpp    # MPU9250/6500 accel/gyro/mag driver over raw I2C register access
   pid.cpp        # generic PID controller
   control.cpp    # straight-line/turn/wall-centering PID loops built on pid.h
-  comms.cpp      # serial line protocol: telemetry out, PID gains + RUN commands in
   maze.cpp       # maze grid state + flood-fill/Dijkstra search (no hardware calls)
   solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/drive.h
   tasks.cpp      # same solve, split into a planning task (core 0) + control task (core 1)
-  main.cpp       # setup()/loop() — initializes and calls the modules
+  main.cpp       # setup()/loop() — MODE_* build-select switches between test/solve builds
 platformio.ini   # board/framework config + library dependencies
 tools/
   maze_cli/      # host CLI that runs maze.cpp's actual algorithm against a maze - see its README
-  dashboard/     # local web app: PID tuning + live telemetry + maze validator - see its README
 ```
 
 - **`sensor.h`** declares the sensor module's public interface: pin/address
@@ -131,10 +132,11 @@ tools/
   current user.
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
   machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
-  kept separate from the `[SENSOR]` debug logs so a host tool can filter for
-  `DATA,` lines and ignore the rest. Not used by the current default build
-  (see `comms.h` for the richer protocol that superseded it for tuning) —
-  kept for a lighter-weight sensor-only stream if that's ever useful again.
+  kept separate from the `[SENSOR]` debug logs so a host tool (or just your
+  own eyes on the serial monitor) can filter for `DATA,` lines and ignore
+  the rest. Used by `main.cpp`'s `MODE_SENSOR_TELEMETRY` build (the
+  current default) — motors stay off, only the ToF sensors are brought up,
+  for bench-tuning sensor placement/thresholds in isolation.
 - **`motor.h`** declares the motor module's public interface:
   `motor_id_t` (`MOTOR_A`/`MOTOR_B`), pin constants, `motor_init()`,
   `motor_set_speed(motor, speed)` (-255..255, negative = reverse), and
@@ -158,8 +160,8 @@ tools/
   warning line if it drops below `BATTERY_LOW_VOLTAGE` (3.3V).
   `battery_get_percent(voltage)` maps that to a rough 0-100% charge
   estimate via a piecewise-linear 1S LiPo discharge curve — good enough for
-  a dashboard gauge, not a calibrated fuel gauge (it'll read a bit low
-  under load, from voltage sag).
+  a rough "how much is left" readout, not a calibrated fuel gauge (it'll
+  read a bit low under load, from voltage sag).
 - **`encoder.h`/`encoder.cpp`** decode each wheel's quadrature encoder via a
   `CHANGE` interrupt on its channel-A pin (reading channel B at that instant
   to get direction), and expose a running signed tick count per wheel via
@@ -182,7 +184,7 @@ tools/
 - **`pid.h`/`pid.cpp`** — a minimal generic PID controller (`pid_ctrl_t` +
   `pid_update()`), with anti-windup clamping on the integral term. One
   instance per control loop; gains are set/read independently at runtime
-  (see `control.h`/`comms.h`) rather than baked in at compile time. (Named
+  (see `control.h`) rather than baked in at compile time. (Named
   `pid_ctrl_t`, not `pid_t` — the latter collides with POSIX's process-ID
   typedef, which Arduino.h pulls in transitively.)
 - **`control.h`/`control.cpp`** — three concrete PID-driven maneuvers, each
@@ -206,18 +208,13 @@ tools/
 
   Each `control_run_*()` blocks until its maneuver finishes, hits its
   hard safety timeout (`CONTROL_MAX_RUN_MS`, 5s, for the three PID
-  maneuvers above), or `control_request_abort()` is called — and calls a
-  `tick_cb` every ~10ms so the caller (`comms.cpp`) can stream telemetry
-  and poll for that abort request while the maneuver runs.
-  `WHEEL_DIAMETER_MM`/`ENCODER_TICKS_PER_REV` are geometry guesses -
-  measure and correct them once encoders are mounted.
-- **`comms.h`/`comms.cpp`** implement the serial protocol the dashboard
-  (`tools/dashboard`) speaks: plain-text commands in (`PID <loop> <kp> <ki>
-  <kd>`, `GETPID <loop>`, `RUN <maneuver> <arg>`, `RUN stop`), one JSON
-  telemetry object out per line (sensor/battery/encoder/IMU/PID-debug
-  readings) — both roughly every 50ms when idle, and once per control-loop
-  iteration during a `RUN`. See the comment block at the top of `comms.h`
-  for the exact schema.
+  maneuvers above), or `control_request_abort()` is called — and calls an
+  optional `tick_cb` every ~10ms so a caller can observe/abort mid-maneuver
+  (pass `nullptr` if that's not needed, as `main.cpp`'s `MODE_STRAIGHT_18CM`
+  does). `WHEEL_DIAMETER_MM`/`ENCODER_TICKS_PER_REV` are measured (32mm,
+  715 ticks/rev) via `main.cpp`'s `MODE_ENCODER_CALIBRATION` build - see
+  the comment above them in `control.h` if the wheel or encoder changes
+  and they need re-measuring.
 - **`maze.h`/`maze.cpp`** hold the maze grid (walls-per-cell bitmask) and two
   search algorithms over it, both pure grid logic — no sensor/motor calls —
   so neither depends on real hardware:
@@ -248,11 +245,11 @@ tools/
   in place of the simulator's `API_*` calls), the same
   search-to-center-then-return-to-start loop as `mms-c/Main.c`'s `main()`.
   Movement is timed/open-loop by default (`SOLVER_CELL_MOVE_TIME_MS`,
-  `SOLVER_TURN_90_TIME_MS` — both untuned placeholders); once `encoder.h`'s
-  pins are wired up and `SOLVER_CELL_TICKS` is set to a measured
-  ticks-per-cell value, it switches to counting encoder ticks instead. Not
-  wired into `main.cpp` by default — see the commented-out block near the
-  top of `main.cpp` to enable it (in place of the PID dashboard build).
+  `SOLVER_TURN_90_TIME_MS` — both untuned placeholders); once
+  `SOLVER_CELL_TICKS` is set to a measured ticks-per-cell value (derive it
+  from `control.h`'s now-measured `ENCODER_TICKS_PER_REV`/
+  `WHEEL_DIAMETER_MM`), it switches to counting encoder ticks instead. Not
+  active by default — select `main.cpp`'s `MODE_MAZE_SOLVER` to enable it.
 - **`tasks.h`/`tasks.cpp`** run the same overall solve as `solver.cpp` but
   split across the ESP32's two cores as separate FreeRTOS tasks, talking
   over two queues:
@@ -271,17 +268,19 @@ tools/
   note in `tasks.cpp` on queueing it further ahead for real overlap between
   the two cores. `tasks_start()` spawns both tasks and returns immediately;
   call it once from `setup()` and leave `loop()` idle. This is an
-  alternative to `solver.h`, not a complement to it — see the note in
-  `main.cpp` where both are wired in as opt-in blocks.
-- **`main.cpp`** — **current default build: the PID-tuning dashboard.**
-  Brings up motors, encoders, the IMU, and the ToF sensors in `setup()`,
-  then in `loop()` dispatches incoming serial commands (`comms_poll()`) and
-  sends one telemetry line roughly every 50ms (`comms_tick()`) — see
-  `comms.h` above and `tools/dashboard`. The maze-solving builds
-  (`solver.h`/`tasks.h`) and the earlier bare motion-test wiring are left
-  as commented-out alternatives at the top of the file — mutually
-  exclusive with this build and each other; swap one in once PID is dialed
-  in and you're ready to run the actual maze.
+  alternative to `solver.h`, not a complement to it — select `main.cpp`'s
+  `MODE_MAZE_SOLVER_RTOS` instead of `MODE_MAZE_SOLVER` to use it.
+- **`main.cpp`** — every `setup()`/`loop()` build this firmware has needed
+  lives here at once, each wrapped in `#if defined(MODE_...)`. A block of
+  `#define MODE_*` lines near the top of the file selects which one
+  compiles in; uncomment exactly one (a `#error` check refuses to build
+  otherwise) and reflash. Current default: `MODE_SENSOR_TELEMETRY`
+  (motors off, ToF sensors only, streamed as `DATA,` lines — for bench
+  sensor tuning). Other modes: `MODE_MOTORS_ONLY`, `MODE_DRIVE_TEST`,
+  `MODE_OBSTACLE_AVOID`, `MODE_BATTERY_IMU_BRINGUP`, `MODE_MOTOR_PID_SYNC`,
+  `MODE_ENCODER_CALIBRATION`, `MODE_STRAIGHT_18CM`, `MODE_MAZE_SOLVER`,
+  and `MODE_MAZE_SOLVER_RTOS` — see each block's comment in `main.cpp` for
+  what it does.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
@@ -293,8 +292,72 @@ in plain C style regardless, so modules stay simple to call from `main`.
 ```
 pio run          # build
 pio run -t upload   # flash to the board
-pio device monitor  # view serial logs (115200 baud) - or use tools/dashboard instead
+pio device monitor  # view serial logs (115200 baud)
 ```
+
+## Testing
+
+Two different kinds of test, because most of this codebase touches real
+hardware and most of it doesn't:
+
+- **`test/`** — host-native unit tests (PlatformIO + Unity) for the
+  modules with zero Arduino/hardware dependency: `maze.cpp` (grid logic,
+  flood fill, Dijkstra planner), `pid.cpp` (generic controller math), and
+  `filter.cpp` (despike + EMA smoothing). Run them with:
+  ```
+  pio test -e native
+  ```
+  No board needed — these compile and run directly on your machine (see
+  `[env:native]` in `platformio.ini`, which restricts that environment's
+  `src/` build to just those three files via `build_src_filter`). Every
+  other module (`motor`, `sensor`, `drive`, `battery`, `encoder`,
+  `mpu9250`, `control`, `solver`, `tasks`, ...) calls into `Arduino.h`/real
+  peripherals somewhere in its call chain, so it can't be exercised this
+  way without a hardware mock — not worth building for this project.
+
+- **`main.cpp`'s `MODE_*` builds** — the on-device equivalent for
+  everything hardware-bound: each `MODE_*` block (see the top of
+  `main.cpp`) brings up exactly the module(s) it's testing and prints
+  what it reads/does over serial, so you flash it, watch the serial
+  monitor (or move the robot), and eyeball whether it's behaving —
+  `MODE_MOTORS_ONLY` for per-motor direction checks, `MODE_SENSOR_TELEMETRY`
+  for ToF readings, `MODE_ENCODER_CALIBRATION` for tick counting, and so
+  on. To add a new one for another hardware component, follow the same
+  shape as the existing blocks:
+  ```cpp
+  // 1. Add a #define near the top of main.cpp, in the MODE_* list and
+  //    the MODE_COUNT macro (both already list every existing mode):
+  // #define MODE_MY_COMPONENT_TEST   // one-line description of what it checks
+
+  // 2. Add the block itself (anywhere among the other #if defined(MODE_...)
+  //    blocks - order doesn't matter, only one is ever compiled in):
+  #if defined(MODE_MY_COMPONENT_TEST)
+  // What this checks and how to read the output - e.g. "logs raw ADC
+  // counts each second; confirm they track battery voltage as expected."
+
+  void setup()
+  {
+      Serial.begin(115200);
+      delay(1000);
+
+      Serial.println("[MAIN] booting (my component test)...");
+      my_component_init();   // whichever module(s) this is exercising
+  }
+
+  void loop()
+  {
+      // Read/exercise the component and print something you can verify
+      // by eye - a raw reading, a derived value, a pass/fail check.
+      Serial.printf("[MAIN] reading = %d\n", my_component_read());
+      delay(200);
+  }
+  #endif // MODE_MY_COMPONENT_TEST
+  ```
+  Then flip the `#define` at the top of the file to your new mode
+  (commenting out whichever was active) and reflash — the `MODE_COUNT`
+  `#error` check will refuse to build if that edit leaves zero or more
+  than one mode active, so a stray uncomment can't silently ship the
+  wrong build.
 
 ## Tools
 
@@ -302,13 +365,3 @@ pio device monitor  # view serial logs (115200 baud) - or use tools/dashboard in
   `maze.cpp` algorithm (flood fill + Dijkstra) against a maze, so it can
   be validated/visualized without hardware or the `mms` simulator's GUI.
   See its README for the build step and I/O protocol.
-- **`tools/dashboard`** — the local web app for PID tuning, live
-  telemetry, and maze-algorithm validation described above. See its
-  README for setup and usage. It calls `tools/maze_cli` for the maze
-  validator half, and can launch the real `mms` simulator AppImage
-  (`../mms-x86_64.AppImage` relative to this repo, as configured in
-  `tools/dashboard/server.py`) as a separate window for visual/manual
-  reference — scripting that GUI itself to auto-run and report back a
-  path was out of scope given the timeline, so the dashboard's own maze
-  validator (driving the real algorithm code directly) is the primary way
-  to check the algorithm, not the AppImage.

@@ -4,7 +4,8 @@ Runs the exact maze-solving algorithm the robot runs (`../../src/maze.cpp`
 — flood fill for exploration, Dijkstra for the turn-minimizing speed run —
 zero Arduino dependencies) against a maze, entirely on the host. Built so
 the algorithm can be validated/visualized without needing to script the
-`mms` simulator's Qt GUI — see `../dashboard`, which drives this tool.
+`mms` simulator's Qt GUI — drive it directly over stdin/stdout (see
+Protocol below).
 
 ## Build
 
@@ -18,9 +19,7 @@ dependencies.
 ## Protocol
 
 Reads whitespace-separated `KEY VALUE...` tokens from stdin (not JSON —
-this file has no JSON dependency; `../dashboard/server.py` translates the
-frontend's JSON request into this before piping it in), one JSON object
-to stdout.
+this file has no JSON dependency), one JSON object to stdout.
 
 Input keys (any order, all optional except `MODE`):
 

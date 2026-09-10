@@ -18,9 +18,9 @@ static control_debug_t s_debug;
 static volatile bool s_abort = false;
 
 void control_init(void) {
-    // Starting gains are guesses, not measurements - tune all three from
-    // the dashboard. Integral limits keep a stuck integrator from railing
-    // the output while gains are still being found.
+    // Starting gains are guesses, not measurements - tune all three via
+    // control_set_gains(). Integral limits keep a stuck integrator from
+    // railing the output while gains are still being found.
     pid_init(&s_pid[CONTROL_LOOP_STRAIGHT],   1.0f, 0.0f, 0.0f, 200.0f);
     pid_init(&s_pid[CONTROL_LOOP_TURN],       2.0f, 0.0f, 0.1f, 90.0f);
     pid_init(&s_pid[CONTROL_LOOP_WALLCENTER], 0.8f, 0.0f, 0.05f, 100.0f);

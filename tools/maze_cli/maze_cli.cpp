@@ -1,13 +1,10 @@
 // Host-side CLI that runs the exact same maze-solving code the robot
 // runs (../../src/maze.cpp - zero Arduino dependencies) against a maze,
 // so the algorithm can be validated/visualized without needing to
-// script the mms simulator's GUI. See ../dashboard for the frontend
-// that drives this.
+// script the mms simulator's GUI. Drive it directly over stdin/stdout.
 //
 // Input: a whitespace/line-separated list of KEY VALUE... tokens on
-// stdin (deliberately not JSON - keeps this file dependency-free; the
-// dashboard's Python backend translates the frontend's JSON request
-// into this before piping it in):
+// stdin (deliberately not JSON - keeps this file dependency-free):
 //
 //   MODE search|speedrun
 //   START <x> <y>                          (default 0 0)
@@ -22,9 +19,9 @@
 // Output: one JSON object on stdout - see README.md in this directory
 // for the exact schema.
 //
-// Unrecognized keys are ignored (forward-compatible with a newer
-// dashboard); WIDTH/HEIGHT are accepted and ignored since maze size is
-// fixed at compile time by MAZE_WIDTH/MAZE_HEIGHT (see ../../include/maze.h).
+// Unrecognized keys are ignored; WIDTH/HEIGHT are accepted and ignored
+// since maze size is fixed at compile time by MAZE_WIDTH/MAZE_HEIGHT
+// (see ../../include/maze.h).
 
 #include <algorithm>
 #include <cstdint>
