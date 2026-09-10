@@ -85,6 +85,9 @@
   .legend span::before { content: "●"; margin-right: 4px; }
   .battery-bar { height: 18px; border-radius: 4px; background: #262a35; overflow: hidden; margin-bottom: 6px; }
   .battery-bar-fill { height: 100%; background: var(--good); transition: width 0.3s; }
+  .pwm-bar { position: relative; height: 16px; border-radius: 4px; background: #262a35; overflow: hidden; margin-bottom: 10px; }
+  .pwm-bar-zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--panel-border); z-index: 1; }
+  .pwm-bar-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: var(--accent); transition: width 0.1s, left 0.1s; }
   .full-width { grid-column: 1 / -1; }
   .pid-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .pid-tabs button { flex: 1; background: #262a35; color: var(--text); }
@@ -147,6 +150,19 @@
     <div class="legend">
       <span style="color:#4ea1ff">left mm</span>
       <span style="color:#43d17a">right mm</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Motor PWM (speed)</h2>
+    <div class="stat-row"><span class="label">Left</span><span class="value" id="pwmLVal">0</span></div>
+    <div class="pwm-bar"><div class="pwm-bar-zero"></div><div class="pwm-bar-fill" id="pwmLFill"></div></div>
+    <div class="stat-row"><span class="label">Right</span><span class="value" id="pwmRVal">0</span></div>
+    <div class="pwm-bar"><div class="pwm-bar-zero"></div><div class="pwm-bar-fill" id="pwmRFill"></div></div>
+    <canvas class="chart" id="pwmChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">left</span>
+      <span style="color:#43d17a">right</span>
     </div>
   </div>
 
@@ -308,6 +324,23 @@ const tofChart = new RollingChart(document.getElementById("tofChart"),
   [{key:"f",color:"#4ea1ff"},{key:"r",color:"#43d17a"},{key:"l",color:"#ffb84e"}], 150, [0, 500]);
 const encChart = new RollingChart(document.getElementById("encChart"),
   [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
+const pwmChart = new RollingChart(document.getElementById("pwmChart"),
+  [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, [-255, 255]);
+
+// Signed -255..255 value -> a bar that grows left (reverse) or right
+// (forward) from a center zero-mark.
+function setPwmBar(fillEl, value) {
+  const pct = Math.max(-100, Math.min(100, (value / 255) * 100));
+  if (pct >= 0) {
+    fillEl.style.left = "50%";
+    fillEl.style.width = (pct / 2) + "%";
+    fillEl.style.background = "#43d17a";
+  } else {
+    fillEl.style.left = (50 + pct / 2) + "%";
+    fillEl.style.width = (-pct / 2) + "%";
+    fillEl.style.background = "#ffb84e";
+  }
+}
 const gyroChart = new RollingChart(document.getElementById("gyroChart"),
   [{key:"gx",color:"#4ea1ff"},{key:"gy",color:"#43d17a"},{key:"gz",color:"#ffb84e"}], 150, null);
 const pidChart = new RollingChart(document.getElementById("pidChart"),
@@ -398,6 +431,13 @@ es.onmessage = (ev) => {
     document.getElementById("distL").textContent = d.enc.dl_mm.toFixed(1) + " mm";
     document.getElementById("distR").textContent = d.enc.dr_mm.toFixed(1) + " mm";
     encChart.push({l: d.enc.dl_mm, r: d.enc.dr_mm});
+  }
+  if (d.pwm) {
+    document.getElementById("pwmLVal").textContent = d.pwm.l;
+    document.getElementById("pwmRVal").textContent = d.pwm.r;
+    setPwmBar(document.getElementById("pwmLFill"), d.pwm.l);
+    setPwmBar(document.getElementById("pwmRFill"), d.pwm.r);
+    pwmChart.push({l: d.pwm.l, r: d.pwm.r});
   }
   if (d.imu) {
     document.getElementById("imuAccel").textContent =

@@ -23,6 +23,7 @@ static const motor_pins_t s_motor[MOTOR_COUNT] = {
     { MOTOR_B_PWM, MOTOR_B_IN1, MOTOR_B_IN2, MOTOR_B_PWM_CHANNEL }
 };
 static const char *s_name[MOTOR_COUNT] = { "A", "B" };
+static int16_t s_last_speed[MOTOR_COUNT] = { 0, 0 };
 
 void motor_init(void) {
     for (int i = 0; i < MOTOR_COUNT; i++) {
@@ -59,8 +60,13 @@ void motor_set_speed(motor_id_t motor, int16_t speed) {
     }
 
     ledcWrite(m->pwm_channel, (uint32_t)abs(speed));
+    s_last_speed[motor] = speed;
 
     Serial.printf("[MOTOR] %s speed=%d\n", s_name[motor], speed);
+}
+
+int16_t motor_get_speed(motor_id_t motor) {
+    return s_last_speed[motor];
 }
 
 void motor_stop_all(void) {

@@ -94,6 +94,11 @@ static bool ak8963_init(void) {
 }
 
 bool mpu9250_init(void) {
+    // Same internal-pull-up rationale as sensor.cpp - this is the same
+    // physical bus (shared with the ToF sensors), so whichever module's
+    // init() runs first sets these; harmless to set again if both do.
+    pinMode(MPU9250_I2C_SDA, INPUT_PULLUP);
+    pinMode(MPU9250_I2C_SCL, INPUT_PULLUP);
     Wire.begin(MPU9250_I2C_SDA, MPU9250_I2C_SCL);
     pinMode(MPU9250_INT_PIN, INPUT);
 

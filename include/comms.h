@@ -22,8 +22,12 @@
 // maneuver live):
 //   {"t":<millis>,"tof":{"f":..,"r":..,"l":..},"batt":{"v":..,"pct":..},
 //    "enc":{"l":..,"r":..,"dl_mm":..,"dr_mm":..},
+//    "pwm":{"l":..,"r":..},
 //    "imu":{"ax":..,"ay":..,"az":..,"gx":..,"gy":..,"gz":..,"temp":..},
 //    "pid":{"loop":"straight","sp":..,"meas":..,"out":..,"active":true}}
+// "pwm" is each wheel's last-commanded signed motor speed (-255..255,
+// via motor_get_speed()) - what's actually driving the wheel right now,
+// whether idle, mid-RUN-maneuver, or driven some other way.
 
 void comms_init(void);
 

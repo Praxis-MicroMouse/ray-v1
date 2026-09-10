@@ -29,6 +29,11 @@ void motor_init(void);
 // Out-of-range values are clamped.
 void motor_set_speed(motor_id_t motor, int16_t speed);
 
+// Last speed actually applied via motor_set_speed() (post-clamp), for
+// telemetry/display - e.g. the dashboard's PWM readout. 0 until the
+// first motor_set_speed() call.
+int16_t motor_get_speed(motor_id_t motor);
+
 void motor_stop_all(void);
 
 #endif // MOTOR_H

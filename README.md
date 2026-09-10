@@ -64,6 +64,7 @@ modules together.
 ```
 include/
   sensor.h       # public C-style API for the ToF sensor module
+  filter.h       # public C-style API for the despike+smoothing filter sensor.cpp applies
   telemetry.h    # public C-style API for the serial telemetry module
   motor.h        # public C-style API for the motor driver module
   drive.h        # public C-style API for the simple movement module
@@ -78,6 +79,7 @@ include/
   tasks.h        # public C-style API for the dual-core RTOS version of the solver
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
+  filter.cpp     # despike + exponential-smoothing filter, one instance per ToF channel
   telemetry.cpp  # streams sensor readings over serial as DATA,... lines
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   drive.cpp      # simple forward/turn movement built on the motor module
@@ -102,10 +104,26 @@ tools/
   `sensor_read_all()`. Any other module only needs to include this header.
 - **`sensor.cpp`** contains the implementation: it resets all three sensors via
   XSHUT, brings them up one at a time so each can be assigned a unique I2C
-  address (they'd otherwise collide on the shared bus), and reads distances via
-  the Adafruit VL53L0X library in its `HIGH_ACCURACY` profile (longer timing
-  budget, lower noise — matters most at the short 0-10cm ranges used for
-  tuning). Every step logs to serial (`[SENSOR] ...`) for debugging.
+  address (they'd otherwise collide on the shared bus), enables the ESP32's
+  internal pull-ups on SDA/SCL before `Wire.begin()` (no external pull-ups
+  on the breakouts, and `Wire.begin()` doesn't reliably enable them itself),
+  and reads distances via the Adafruit VL53L0X library in its
+  `HIGH_ACCURACY` profile (longer timing budget, lower noise — matters most
+  at the short 0-10cm ranges used for tuning). Every raw reading is run
+  through `filter.h`'s despike+smoothing filter (one instance per channel)
+  before being returned, since VL53L0X readings are prone to occasional
+  wild single-sample spikes from stray reflections. Every step logs to
+  serial (`[SENSOR] ...`) for debugging.
+- **`filter.h`/`filter.cpp`** — a small stateful filter for noisy,
+  spike-prone distance readings: a new reading more than
+  `FILTER_SPIKE_THRESHOLD_MM` away from the current estimate is held back
+  unless the *previous* raw reading already agreed with it (so a real fast
+  change, like a wall appearing, still gets through after one confirming
+  sample, while a lone bad reading doesn't move the estimate at all);
+  accepted readings are blended in via exponential moving average
+  (`FILTER_EMA_ALPHA`). Generic (`filter_t` + `filter_update()`), so it's
+  not tied to ToF sensors specifically, but `sensor.cpp` is its only
+  current user.
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
   machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
   kept separate from the `[SENSOR]` debug logs so a host tool can filter for
@@ -203,8 +221,11 @@ tools/
     guess — and is meant for planning the fast "speed run" once the map is
     known, since turns cost real time a plain cell-count metric ignores.
   Maze size defaults to a full 16x16 grid (`MAZE_WIDTH`/`MAZE_HEIGHT`);
-  change those for a different contest maze size. Both algorithms are
-  validated against a host CLI in `tools/maze_cli` — see its README.
+  change those for a different contest maze size. `MAZE_CELL_SIZE_MM`
+  (180 - measured: cells are 18cm x 18cm) is the physical size of one
+  cell; `solver.h`'s wall-detection threshold is derived from it. Both
+  search algorithms are validated against a host CLI in `tools/maze_cli`
+  — see its README.
 - **`solver.h`/`solver.cpp`** are the single-task hardware glue: `solver_run()`
   explores using `maze_flood_fill()` (senses walls with `sensor_read_all()` —
   a wall is "there" if a ToF reading is under `SOLVER_WALL_THRESHOLD_MM` —

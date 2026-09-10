@@ -6,6 +6,7 @@
 
 #include "control.h"
 #include "drive.h"
+#include "motor.h"
 #include "sensor.h"
 #include "battery.h"
 #include "encoder.h"
@@ -44,6 +45,9 @@ static void send_telemetry_line(void) {
     float dl_mm = control_ticks_to_mm(enc_l);
     float dr_mm = control_ticks_to_mm(enc_r);
 
+    int16_t pwm_l = motor_get_speed(DRIVE_LEFT_MOTOR);
+    int16_t pwm_r = motor_get_speed(DRIVE_RIGHT_MOTOR);
+
     mpu9250_data_t imu;
     memset(&imu, 0, sizeof(imu));
     mpu9250_read(&imu);
@@ -55,12 +59,14 @@ static void send_telemetry_line(void) {
         "\"tof\":{\"f\":%u,\"r\":%u,\"l\":%u},"
         "\"batt\":{\"v\":%.2f,\"pct\":%.0f},"
         "\"enc\":{\"l\":%ld,\"r\":%ld,\"dl_mm\":%.1f,\"dr_mm\":%.1f},"
+        "\"pwm\":{\"l\":%d,\"r\":%d},"
         "\"imu\":{\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.1f,\"gy\":%.1f,\"gz\":%.1f,\"temp\":%.1f},"
         "\"pid\":{\"loop\":\"%s\",\"sp\":%.1f,\"meas\":%.1f,\"out\":%.1f,\"active\":%s}}\n",
         (unsigned long) millis(),
         sr.front_mm, sr.right_mm, sr.left_mm,
         batt_v, batt_pct,
         (long) enc_l, (long) enc_r, dl_mm, dr_mm,
+        (int) pwm_l, (int) pwm_r,
         imu.accel_g[0], imu.accel_g[1], imu.accel_g[2],
         imu.gyro_dps[0], imu.gyro_dps[1], imu.gyro_dps[2], imu.temp_c,
         loop_name(dbg.loop), dbg.setpoint, dbg.measurement, dbg.output,
