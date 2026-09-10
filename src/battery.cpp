@@ -30,3 +30,22 @@ float battery_read_voltage(void) {
 
     return battery_v;
 }
+
+float battery_get_percent(float voltage) {
+    // (voltage, percent) breakpoints, highest first - a typical 1S LiPo
+    // rest-voltage discharge curve, coarsely approximated.
+    static const float v_pts[] = { 4.20f, 4.00f, 3.85f, 3.70f, 3.50f, 3.30f };
+    static const float p_pts[] = { 100.0f, 80.0f, 60.0f, 40.0f, 15.0f, 0.0f };
+    const int n = sizeof(v_pts) / sizeof(v_pts[0]);
+
+    if (voltage >= v_pts[0]) return 100.0f;
+    if (voltage <= v_pts[n - 1]) return 0.0f;
+
+    for (int i = 0; i < n - 1; i++) {
+        if (voltage <= v_pts[i] && voltage >= v_pts[i + 1]) {
+            float t = (voltage - v_pts[i + 1]) / (v_pts[i] - v_pts[i + 1]);
+            return p_pts[i + 1] + t * (p_pts[i] - p_pts[i + 1]);
+        }
+    }
+    return 0.0f;
+}

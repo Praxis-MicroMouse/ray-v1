@@ -67,4 +67,45 @@ void maze_flood_fill(maze_t *maze, const maze_cell_t *goals, int goal_count);
 // neighbor is walled off or unreachable.
 maze_dir_t maze_choose_next_direction(const maze_t *maze, int x, int y, maze_dir_t heading);
 
+// ---- Turn-minimizing path planning (for a fully-explored maze) ----
+//
+// maze_flood_fill()/maze_choose_next_direction() greedily minimize cell
+// count only, and work fine on a partially-explored maze (that's what
+// they're for during exploration). Once the maze is fully mapped, a
+// competition run wants the fastest path, and turns cost real time
+// (decelerate, pivot, accelerate) that a cell-count-only metric ignores.
+//
+// maze_plan_min_turn_path() runs Dijkstra over an expanded state graph
+// of (cell, heading) - not just cell - where "drive forward one cell"
+// and "turn 90 degrees in place" are separate weighted edges. Weighting
+// turns higher than a forward move biases the shortest *weighted* path
+// toward fewer turns whenever a similarly-short alternative exists, at
+// the cost of assuming the wall map is trustworthy (unlike flood fill,
+// this won't self-correct if walls are still just guesses).
+
+typedef enum {
+    MAZE_ACTION_FORWARD = 0,
+    MAZE_ACTION_TURN_LEFT,
+    MAZE_ACTION_TURN_RIGHT
+} maze_action_t;
+
+// Edge weights for the Dijkstra planner below. Turn costs more than a
+// move so the planner prefers a path with fewer turns over one that's
+// only marginally shorter in cells - tune the ratio to taste.
+#define MAZE_MOVE_COST 2
+#define MAZE_TURN_COST 3
+
+// Generous upper bound on the number of actions a planned path can
+// contain (worst case, no two states are ever revisited).
+#define MAZE_MAX_PATH_LEN (MAZE_CELL_COUNT * 2)
+
+// Finds the min-cost (fewest-turns-biased) path from (start, start_heading)
+// to whichever goal cell/heading combination is cheapest to reach, given
+// the walls currently known in `maze`. Writes up to max_actions actions
+// into out_actions (in the order they should be executed) and returns
+// how many were written - 0 if start is already a goal or no path exists.
+int maze_plan_min_turn_path(const maze_t *maze, maze_cell_t start, maze_dir_t start_heading,
+                             const maze_cell_t *goals, int goal_count,
+                             maze_action_t *out_actions, int max_actions);
+
 #endif // MAZE_H

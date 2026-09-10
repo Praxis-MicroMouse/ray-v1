@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MicroMouse Dashboard</title>
+<style>
+  :root {
+    --bg: #12141a;
+    --panel: #1b1e27;
+    --panel-border: #2a2e3a;
+    --text: #e6e8ee;
+    --text-dim: #8890a0;
+    --accent: #4ea1ff;
+    --good: #43d17a;
+    --warn: #ffb84e;
+    --bad: #ff5c5c;
+    --grid: #262a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; margin-right: auto; font-weight: 600; }
+  select, input[type=number], input[type=text] {
+    background: #262a35;
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 13px;
+  }
+  button {
+    background: var(--accent);
+    color: #0a0c10;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary { background: #333846; color: var(--text); }
+  button.danger { background: var(--bad); color: #200; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #statusDot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  #statusDot.on { background: var(--good); }
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 14px;
+    padding: 14px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin: 0 0 10px 0;
+  }
+  .stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+  .stat-row .label { color: var(--text-dim); }
+  .stat-row .value { font-variant-numeric: tabular-nums; font-weight: 600; }
+  canvas.chart { width: 100%; height: 110px; background: #0d0f14; border-radius: 4px; display: block; }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .legend span::before { content: "●"; margin-right: 4px; }
+  .battery-bar { height: 18px; border-radius: 4px; background: #262a35; overflow: hidden; margin-bottom: 6px; }
+  .battery-bar-fill { height: 100%; background: var(--good); transition: width 0.3s; }
+  .full-width { grid-column: 1 / -1; }
+  .pid-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .pid-tabs button { flex: 1; background: #262a35; color: var(--text); }
+  .pid-tabs button.active { background: var(--accent); color: #0a0c10; }
+  .gain-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .gain-row label { width: 24px; color: var(--text-dim); }
+  .gain-row input { flex: 1; }
+  .btn-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .maze-layout { display: flex; gap: 16px; flex-wrap: wrap; }
+  #mazeCanvas { background: #0d0f14; border-radius: 4px; }
+  .maze-controls { min-width: 220px; display: flex; flex-direction: column; gap: 8px; }
+  .small-note { color: var(--text-dim); font-size: 11px; line-height: 1.4; }
+  #logBox {
+    height: 140px; overflow-y: auto; background: #0d0f14; border-radius: 4px;
+    padding: 6px 8px; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MicroMouse Dashboard</h1>
+  <span id="statusDot"></span>
+  <select id="portSelect"></select>
+  <button id="refreshPorts" class="secondary">Refresh</button>
+  <input id="baudInput" type="number" value="115200" style="width:90px">
+  <button id="connectBtn">Connect</button>
+  <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+</header>
+
+<main>
+
+  <div class="panel">
+    <h2>Battery</h2>
+    <div class="battery-bar"><div class="battery-bar-fill" id="battFill" style="width:0%"></div></div>
+    <div class="stat-row"><span class="label">Voltage</span><span class="value" id="battV">-- V</span></div>
+    <div class="stat-row"><span class="label">Charge</span><span class="value" id="battPct">-- %</span></div>
+  </div>
+
+  <div class="panel">
+    <h2>ToF Sensors (mm)</h2>
+    <div class="stat-row"><span class="label">Front</span><span class="value" id="tofF">--</span></div>
+    <div class="stat-row"><span class="label">Right</span><span class="value" id="tofR">--</span></div>
+    <div class="stat-row"><span class="label">Left</span><span class="value" id="tofL">--</span></div>
+    <canvas class="chart" id="tofChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">front</span>
+      <span style="color:#43d17a">right</span>
+      <span style="color:#ffb84e">left</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Encoders</h2>
+    <div class="stat-row"><span class="label">Left ticks</span><span class="value" id="encL">--</span></div>
+    <div class="stat-row"><span class="label">Right ticks</span><span class="value" id="encR">--</span></div>
+    <div class="stat-row"><span class="label">Left dist</span><span class="value" id="distL">-- mm</span></div>
+    <div class="stat-row"><span class="label">Right dist</span><span class="value" id="distR">-- mm</span></div>
+    <canvas class="chart" id="encChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">left mm</span>
+      <span style="color:#43d17a">right mm</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>MPU9250 / 6500</h2>
+    <div class="stat-row"><span class="label">Accel (g)</span><span class="value" id="imuAccel">--</span></div>
+    <div class="stat-row"><span class="label">Gyro (deg/s)</span><span class="value" id="imuGyro">--</span></div>
+    <div class="stat-row"><span class="label">Temp</span><span class="value" id="imuTemp">-- C</span></div>
+    <canvas class="chart" id="gyroChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">gx</span>
+      <span style="color:#43d17a">gy</span>
+      <span style="color:#ffb84e">gz</span>
+    </div>
+  </div>
+
+  <div class="panel full-width">
+    <h2>PID Tuning</h2>
+    <div class="pid-tabs">
+      <button data-loop="straight" class="loop-tab active">Straight (encoders)</button>
+      <button data-loop="turn" class="loop-tab">Turn (gyro)</button>
+      <button data-loop="wallcenter" class="loop-tab">Wall Center (ToF)</button>
+    </div>
+    <div style="display:flex; gap:24px; flex-wrap:wrap;">
+      <div style="min-width:220px;">
+        <div class="gain-row"><label>Kp</label><input type="number" step="0.01" id="gainKp"></div>
+        <div class="gain-row"><label>Ki</label><input type="number" step="0.001" id="gainKi"></div>
+        <div class="gain-row"><label>Kd</label><input type="number" step="0.001" id="gainKd"></div>
+        <div class="btn-row">
+          <button id="setGains">Set gains</button>
+          <button id="getGains" class="secondary">Read from firmware</button>
+        </div>
+        <div class="btn-row" style="margin-top:14px;">
+          <input type="number" id="runArg" placeholder="arg (mm / deg / ms)" style="width:160px">
+          <button id="runBtn">Run</button>
+          <button id="stopBtn" class="danger">Stop</button>
+        </div>
+        <p class="small-note">
+          straight: arg = target distance in mm (needs encoders wired).<br>
+          turn: arg = target angle in degrees (uses gyro).<br>
+          wallcenter: arg = duration in ms (needs ToF sensors).
+        </p>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <canvas class="chart" id="pidChart" width="700" height="160"></canvas>
+        <div class="legend">
+          <span style="color:#4ea1ff">setpoint</span>
+          <span style="color:#43d17a">measured</span>
+          <span style="color:#ffb84e">output</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel full-width">
+    <h2>Maze Algorithm Validator</h2>
+    <div class="maze-layout">
+      <canvas id="mazeCanvas" width="480" height="480"></canvas>
+      <div class="maze-controls">
+        <button id="runSearchBtn">Run Search (simulate)</button>
+        <button id="runSpeedrunBtn" class="secondary">Run Speed Run (simulate)</button>
+        <button id="launchMmsBtn" class="secondary">Launch mms Simulator</button>
+        <label><input type="checkbox" id="showGroundTruth"> show ground-truth walls</label>
+        <div class="btn-row">
+          <button id="playBtn" class="secondary">Play</button>
+          <button id="resetPlayBtn" class="secondary">Reset</button>
+        </div>
+        <input type="range" id="pathSlider" min="0" max="0" value="0" style="width:100%">
+        <div class="stat-row"><span class="label">Moves</span><span class="value" id="mazeMoves">--</span></div>
+        <div class="stat-row"><span class="label">Turns</span><span class="value" id="mazeTurns">--</span></div>
+        <div class="stat-row"><span class="label">Est. time</span><span class="value" id="mazeTime">--</span></div>
+        <p class="small-note">
+          "Run Search" generates a random solvable maze and replays the
+          robot's actual exploration algorithm (maze.cpp) against it,
+          storing the discovered wall map here in the browser. "Run Speed
+          Run" then plans the fewest-turns path (Dijkstra) over that
+          discovered map and animates it. Both call the same code the
+          robot runs on hardware - see tools/maze_cli.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel full-width">
+    <h2>Raw Log</h2>
+    <div id="logBox"></div>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+
+// ---------- small rolling line chart, no external deps ----------
+class RollingChart {
+  constructor(canvas, series, maxPoints, yRange) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.series = series; // [{key, color}]
+    this.maxPoints = maxPoints || 150;
+    this.yRange = yRange || null; // [min,max] fixed, else auto
+    this.data = {};
+    series.forEach(s => this.data[s.key] = []);
+  }
+  push(values) {
+    this.series.forEach(s => {
+      const arr = this.data[s.key];
+      const v = values[s.key];
+      arr.push(typeof v === "number" ? v : null);
+      if (arr.length > this.maxPoints) arr.shift();
+    });
+    this.draw();
+  }
+  draw() {
+    const ctx = this.ctx, w = this.canvas.width, h = this.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    let yMin, yMax;
+    if (this.yRange) {
+      [yMin, yMax] = this.yRange;
+    } else {
+      let vals = [];
+      this.series.forEach(s => vals.push(...this.data[s.key].filter(v => v !== null)));
+      if (vals.length === 0) { yMin = 0; yMax = 1; }
+      else {
+        yMin = Math.min(...vals);
+        yMax = Math.max(...vals);
+        if (yMin === yMax) { yMin -= 1; yMax += 1; }
+        const pad = (yMax - yMin) * 0.15;
+        yMin -= pad; yMax += pad;
+      }
+    }
+
+    ctx.strokeStyle = "#262a35";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = (i / 4) * h;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    this.series.forEach(s => {
+      const arr = this.data[s.key];
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let started = false;
+      arr.forEach((v, i) => {
+        if (v === null) { started = false; return; }
+        const x = (i / (this.maxPoints - 1)) * w;
+        const y = h - ((v - yMin) / (yMax - yMin)) * h;
+        if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+      });
+      ctx.stroke();
+    });
+  }
+}
+
+const tofChart = new RollingChart(document.getElementById("tofChart"),
+  [{key:"f",color:"#4ea1ff"},{key:"r",color:"#43d17a"},{key:"l",color:"#ffb84e"}], 150, [0, 500]);
+const encChart = new RollingChart(document.getElementById("encChart"),
+  [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
+const gyroChart = new RollingChart(document.getElementById("gyroChart"),
+  [{key:"gx",color:"#4ea1ff"},{key:"gy",color:"#43d17a"},{key:"gz",color:"#ffb84e"}], 150, null);
+const pidChart = new RollingChart(document.getElementById("pidChart"),
+  [{key:"sp",color:"#4ea1ff"},{key:"meas",color:"#43d17a"},{key:"out",color:"#ffb84e"}], 200, null);
+
+// ---------- serial connection controls ----------
+const statusDot = document.getElementById("statusDot");
+const portSelect = document.getElementById("portSelect");
+const connectBtn = document.getElementById("connectBtn");
+const disconnectBtn = document.getElementById("disconnectBtn");
+
+async function refreshPorts() {
+  const r = await fetch("/api/serial/ports");
+  const d = await r.json();
+  portSelect.innerHTML = "";
+  d.ports.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p; opt.textContent = p;
+    portSelect.appendChild(opt);
+  });
+  setConnected(d.connected);
+}
+
+function setConnected(connected) {
+  statusDot.classList.toggle("on", connected);
+  connectBtn.disabled = connected;
+  disconnectBtn.disabled = !connected;
+}
+
+document.getElementById("refreshPorts").onclick = refreshPorts;
+
+connectBtn.onclick = async () => {
+  const port = portSelect.value;
+  const baud = parseInt(document.getElementById("baudInput").value, 10);
+  if (!port) return;
+  const r = await fetch("/api/serial/connect", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({port, baud})
+  });
+  const d = await r.json();
+  if (d.ok) { setConnected(true); log("connected to " + port); getGainsForActiveLoop(); }
+  else { alert("connect failed: " + d.error); }
+};
+
+disconnectBtn.onclick = async () => {
+  await fetch("/api/serial/disconnect", {method:"POST"});
+  setConnected(false);
+  log("disconnected");
+};
+
+function sendLine(line) {
+  return fetch("/api/serial/send", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({line})
+  }).then(r => r.json());
+}
+
+// ---------- telemetry stream ----------
+const logBox = document.getElementById("logBox");
+function log(msg) {
+  const line = document.createElement("div");
+  line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+  while (logBox.childNodes.length > 300) logBox.removeChild(logBox.firstChild);
+}
+
+const es = new EventSource("/api/telemetry/stream");
+es.onmessage = (ev) => {
+  let d;
+  try { d = JSON.parse(ev.data); } catch (e) { return; }
+  if (d.tof) {
+    document.getElementById("tofF").textContent = d.tof.f + " mm";
+    document.getElementById("tofR").textContent = d.tof.r + " mm";
+    document.getElementById("tofL").textContent = d.tof.l + " mm";
+    tofChart.push({f: d.tof.f, r: d.tof.r, l: d.tof.l});
+  }
+  if (d.batt) {
+    document.getElementById("battV").textContent = d.batt.v.toFixed(2) + " V";
+    document.getElementById("battPct").textContent = d.batt.pct.toFixed(0) + " %";
+    const fill = document.getElementById("battFill");
+    fill.style.width = d.batt.pct + "%";
+    fill.style.background = d.batt.pct > 30 ? "#43d17a" : (d.batt.pct > 12 ? "#ffb84e" : "#ff5c5c");
+  }
+  if (d.enc) {
+    document.getElementById("encL").textContent = d.enc.l;
+    document.getElementById("encR").textContent = d.enc.r;
+    document.getElementById("distL").textContent = d.enc.dl_mm.toFixed(1) + " mm";
+    document.getElementById("distR").textContent = d.enc.dr_mm.toFixed(1) + " mm";
+    encChart.push({l: d.enc.dl_mm, r: d.enc.dr_mm});
+  }
+  if (d.imu) {
+    document.getElementById("imuAccel").textContent =
+      `${d.imu.ax.toFixed(2)}, ${d.imu.ay.toFixed(2)}, ${d.imu.az.toFixed(2)}`;
+    document.getElementById("imuGyro").textContent =
+      `${d.imu.gx.toFixed(1)}, ${d.imu.gy.toFixed(1)}, ${d.imu.gz.toFixed(1)}`;
+    document.getElementById("imuTemp").textContent = d.imu.temp.toFixed(1) + " C";
+    gyroChart.push({gx: d.imu.gx, gy: d.imu.gy, gz: d.imu.gz});
+  }
+  if (d.pid) {
+    pidChart.push({sp: d.pid.sp, meas: d.pid.meas, out: d.pid.out});
+  }
+  if (d.pidcfg) {
+    if (d.pidcfg.loop === activeLoop) {
+      document.getElementById("gainKp").value = d.pidcfg.kp;
+      document.getElementById("gainKi").value = d.pidcfg.ki;
+      document.getElementById("gainKd").value = d.pidcfg.kd;
+    }
+  }
+  if (d.ack) {
+    log("ack: " + d.ack + " " + (d.loop || ""));
+  }
+};
+es.onerror = () => { /* browser auto-reconnects EventSource */ };
+
+// ---------- PID tuning panel ----------
+let activeLoop = "straight";
+document.querySelectorAll(".loop-tab").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".loop-tab").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeLoop = btn.dataset.loop;
+    getGainsForActiveLoop();
+  };
+});
+
+function getGainsForActiveLoop() {
+  sendLine("GETPID " + activeLoop);
+}
+
+document.getElementById("getGains").onclick = getGainsForActiveLoop;
+
+document.getElementById("setGains").onclick = () => {
+  const kp = document.getElementById("gainKp").value || "0";
+  const ki = document.getElementById("gainKi").value || "0";
+  const kd = document.getElementById("gainKd").value || "0";
+  sendLine(`PID ${activeLoop} ${kp} ${ki} ${kd}`);
+  log(`set ${activeLoop} gains: kp=${kp} ki=${ki} kd=${kd}`);
+};
+
+document.getElementById("runBtn").onclick = () => {
+  const arg = document.getElementById("runArg").value || "0";
+  sendLine(`RUN ${activeLoop} ${arg}`);
+  log(`RUN ${activeLoop} ${arg}`);
+};
+
+document.getElementById("stopBtn").onclick = () => {
+  sendLine("RUN stop");
+  log("RUN stop");
+};
+
+// ---------- maze validator ----------
+const mazeState = {
+  width: 16, height: 16,
+  walls: new Array(256).fill(0),
+  groundTruthWalls: null,
+  path: [],
+  pathIndex: 0,
+  goals: [],
+};
+
+const mazeCanvas = document.getElementById("mazeCanvas");
+const pathSlider = document.getElementById("pathSlider");
+
+function drawMaze() {
+  const ctx = mazeCanvas.getContext("2d");
+  const { width, height } = mazeState;
+  const cell = Math.min(mazeCanvas.width / width, mazeCanvas.height / height);
+  ctx.fillStyle = "#0d0f14";
+  ctx.fillRect(0, 0, mazeCanvas.width, mazeCanvas.height);
+
+  const showGT = document.getElementById("showGroundTruth").checked;
+  const wallsToShow = (showGT && mazeState.groundTruthWalls) ? mazeState.groundTruthWalls : mazeState.walls;
+
+  ctx.strokeStyle = "#4ea1ff";
+  ctx.lineWidth = 2;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      const w = wallsToShow[idx] || 0;
+      const px = x * cell, py = (height - 1 - y) * cell;
+      ctx.beginPath();
+      if (w & 1) { ctx.moveTo(px, py); ctx.lineTo(px + cell, py); }              // N
+      if (w & 2) { ctx.moveTo(px + cell, py); ctx.lineTo(px + cell, py + cell); } // E
+      if (w & 4) { ctx.moveTo(px, py + cell); ctx.lineTo(px + cell, py + cell); } // S
+      if (w & 8) { ctx.moveTo(px, py); ctx.lineTo(px, py + cell); }              // W
+      ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle = "#43d17a55";
+  mazeState.goals.forEach(g => {
+    ctx.fillRect(g.x * cell, (height - 1 - g.y) * cell, cell, cell);
+  });
+
+  if (mazeState.path.length) {
+    ctx.strokeStyle = "#ffb84e";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= mazeState.pathIndex && i < mazeState.path.length; i++) {
+      const p = mazeState.path[i];
+      const cx = p.x * cell + cell / 2, cy = (height - 1 - p.y) * cell + cell / 2;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+
+    const cur = mazeState.path[Math.min(mazeState.pathIndex, mazeState.path.length - 1)];
+    const cx = cur.x * cell + cell / 2, cy = (height - 1 - cur.y) * cell + cell / 2;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.28, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+document.getElementById("showGroundTruth").onchange = drawMaze;
+
+pathSlider.oninput = () => {
+  mazeState.pathIndex = parseInt(pathSlider.value, 10);
+  drawMaze();
+};
+
+let playTimer = null;
+document.getElementById("playBtn").onclick = () => {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; document.getElementById("playBtn").textContent = "Play"; return; }
+  document.getElementById("playBtn").textContent = "Pause";
+  playTimer = setInterval(() => {
+    if (mazeState.pathIndex >= mazeState.path.length - 1) {
+      clearInterval(playTimer); playTimer = null;
+      document.getElementById("playBtn").textContent = "Play";
+      return;
+    }
+    mazeState.pathIndex++;
+    pathSlider.value = mazeState.pathIndex;
+    drawMaze();
+  }, 60);
+};
+
+document.getElementById("resetPlayBtn").onclick = () => {
+  mazeState.pathIndex = 0;
+  pathSlider.value = 0;
+  drawMaze();
+};
+
+document.getElementById("runSearchBtn").onclick = async () => {
+  log("running search simulation...");
+  const r = await fetch("/api/maze/run", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ mode: "search", random: true, seed: Math.floor(Math.random()*1e6), start: {x:0,y:0} })
+  });
+  const d = await r.json();
+  if (!d.ok) { alert("search failed: " + d.error); return; }
+
+  mazeState.width = d.width; mazeState.height = d.height;
+  mazeState.groundTruthWalls = d.ground_truth_walls;
+  mazeState.walls = d.search.discovered_walls; // stored "in memory" here for the speed-run button
+  mazeState.goals = d.goals;
+  mazeState.path = d.search.path;
+  mazeState.pathIndex = 0;
+  pathSlider.max = mazeState.path.length - 1;
+  pathSlider.value = 0;
+
+  document.getElementById("mazeMoves").textContent = d.search.total_moves;
+  document.getElementById("mazeTurns").textContent = d.search.total_turns;
+  document.getElementById("mazeTime").textContent = (d.search.est_time_ms/1000).toFixed(1) + " s";
+  log(`search done: ${d.search.total_moves} moves, ${d.search.total_turns} turns, reached center at step ${d.search.reached_center_at_step}`);
+  drawMaze();
+};
+
+document.getElementById("runSpeedrunBtn").onclick = async () => {
+  if (!mazeState.walls.some(w => w !== 0)) {
+    alert("Run a search first - the speed run plans over the map it discovered.");
+    return;
+  }
+  log("running speed-run simulation...");
+  const r = await fetch("/api/maze/run", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ mode: "speedrun", start: {x:0,y:0}, goals: mazeState.goals, walls: mazeState.walls })
+  });
+  const d = await r.json();
+  if (!d.ok) { alert("speedrun failed: " + d.error); return; }
+
+  mazeState.path = d.speedrun.path;
+  mazeState.pathIndex = 0;
+  pathSlider.max = mazeState.path.length - 1;
+  pathSlider.value = 0;
+
+  document.getElementById("mazeMoves").textContent = d.speedrun.total_moves;
+  document.getElementById("mazeTurns").textContent = d.speedrun.total_turns;
+  document.getElementById("mazeTime").textContent = (d.speedrun.est_time_ms/1000).toFixed(1) + " s";
+  log(`speed run: ${d.speedrun.total_moves} moves, ${d.speedrun.total_turns} turns, est ${(d.speedrun.est_time_ms/1000).toFixed(1)}s`);
+  drawMaze();
+};
+
+document.getElementById("launchMmsBtn").onclick = async () => {
+  const r = await fetch("/api/mms/launch", {method:"POST"});
+  const d = await r.json();
+  if (!d.ok) alert("launch failed: " + d.error);
+  else log("launched mms simulator");
+};
+
+refreshPorts();
+drawMaze();
+</script>
+</body>
+</html>

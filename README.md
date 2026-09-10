@@ -4,15 +4,25 @@ Firmware for our MicroMouse robot, built with [PlatformIO](https://platformio.or
 
 ## Purpose
 
-The robot needs to sense walls on three sides (front, left, right) as it navigates
-the maze. This code brings up three VL53L0X time-of-flight (ToF) distance sensors
-sharing a single I2C bus and reads distance measurements from each, with debug
-logging over serial so behavior can be verified during bring-up and testing.
+The robot senses walls on three sides (front, left, right) with VL53L0X
+time-of-flight (ToF) sensors, drives two motors, reads wheel encoders and
+a 9-DoF IMU, and monitors its own battery. This firmware brings up every
+one of those, plus:
 
-The codebase is written to be modular: each piece of hardware/functionality gets
-its own header + implementation pair, and `main` just wires the modules together.
-This keeps `main` small and makes it straightforward to add new modules (motors,
-encoders, IMU, maze-solving logic, etc.) without touching existing ones.
+- **PID tuning + telemetry dashboard** (the current default build) — a
+  serial protocol (`comms.h`) plus a companion local web app
+  (`tools/dashboard`) for tuning the robot's control loops and watching
+  every sensor live, on the bench, without reflashing between tweaks.
+- **Maze solving** — flood fill for exploration and a turn-minimizing
+  Dijkstra planner for the speed run, ported from the
+  [`mms-c`](../mms-c/Main.c) simulator reference algorithm, runnable
+  single-task (`solver.h`) or split across both ESP32 cores as FreeRTOS
+  tasks (`tasks.h`). Validated against the actual algorithm code, not a
+  reimplementation, via `tools/maze_cli`.
+
+The codebase is written to be modular: each piece of hardware/functionality
+gets its own header + implementation pair, and `main` just wires the
+modules together.
 
 ## Hardware
 
@@ -42,10 +52,12 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
   they are:
   - Left: A = GPIO 4, B = GPIO 16
   - Right: A = GPIO 17, B = GPIO 23
-- MPU-9250 9-DoF IMU (accel/gyro/magnetometer), on the same I2C bus as the
-  ToF sensors (SDA = GPIO 21, SCL = GPIO 22), address 0x68 (AD0 tied low).
-  Suggested INT pin: GPIO 13 (not currently used — the driver polls
-  instead of using the interrupt).
+- IMU — either an MPU-9250/9255 (accel+gyro+magnetometer) or an MPU-6500
+  (same accel/gyro core, no magnetometer); `mpu9250_init()` detects which
+  one via `WHO_AM_I` and works with either. Shares the ToF sensors' I2C bus
+  (SDA = GPIO 21, SCL = GPIO 22), address 0x68 (AD0 tied low). Suggested
+  INT pin: GPIO 13 (not currently used — the driver polls instead of using
+  the interrupt).
 
 ## Code structure
 
@@ -58,22 +70,31 @@ include/
   battery.h      # public C-style API for the battery voltage module
   encoder.h      # public C-style API for the wheel encoder module
   mpu9250.h      # public C-style API for the IMU module
-  maze.h         # public C-style API for the maze grid + flood-fill search
-  solver.h       # public C-style API for the physical maze-solving run
+  pid.h          # public C-style API for the generic PID controller
+  control.h      # public C-style API for the concrete PID-driven control loops
+  comms.h        # public C-style API for the serial telemetry/tuning protocol
+  maze.h         # public C-style API for the maze grid + flood-fill/Dijkstra search
+  solver.h       # public C-style API for the physical maze-solving run (single task)
+  tasks.h        # public C-style API for the dual-core RTOS version of the solver
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
-  telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
+  telemetry.cpp  # streams sensor readings over serial as DATA,... lines
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   drive.cpp      # simple forward/turn movement built on the motor module
-  battery.cpp    # battery voltage divider reading over ADC
+  battery.cpp    # battery voltage divider reading over ADC + charge estimate
   encoder.cpp    # quadrature encoder tick counting via pin-change interrupts
-  mpu9250.cpp    # MPU9250 accel/gyro/mag driver over raw I2C register access
-  maze.cpp       # maze grid state + flood-fill search (no hardware calls)
+  mpu9250.cpp    # MPU9250/6500 accel/gyro/mag driver over raw I2C register access
+  pid.cpp        # generic PID controller
+  control.cpp    # straight-line/turn/wall-centering PID loops built on pid.h
+  comms.cpp      # serial line protocol: telemetry out, PID gains + RUN commands in
+  maze.cpp       # maze grid state + flood-fill/Dijkstra search (no hardware calls)
   solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/drive.h
+  tasks.cpp      # same solve, split into a planning task (core 0) + control task (core 1)
   main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
-matlab/
-  live_tof_plot.m  # live-plots the streamed sensor readings, for tuning
+tools/
+  maze_cli/      # host CLI that runs maze.cpp's actual algorithm against a maze - see its README
+  dashboard/     # local web app: PID tuning + live telemetry + maze validator - see its README
 ```
 
 - **`sensor.h`** declares the sensor module's public interface: pin/address
@@ -88,7 +109,9 @@ matlab/
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
   machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
   kept separate from the `[SENSOR]` debug logs so a host tool can filter for
-  `DATA,` lines and ignore the rest. Used by `matlab/live_tof_plot.m`.
+  `DATA,` lines and ignore the rest. Not used by the current default build
+  (see `comms.h` for the richer protocol that superseded it for tuning) —
+  kept for a lighter-weight sensor-only stream if that's ever useful again.
 - **`motor.h`** declares the motor module's public interface:
   `motor_id_t` (`MOTOR_A`/`MOTOR_B`), pin constants, `motor_init()`,
   `motor_set_speed(motor, speed)` (-255..255, negative = reverse), and
@@ -99,13 +122,21 @@ matlab/
 - **`drive.h`/`drive.cpp`** implement simple two-wheel differential drive on
   top of `motor`: `drive_forward(speed)`, `drive_turn_left(speed)` /
   `drive_turn_right(speed)` (pivot turns — wheels spin opposite directions
-  in place), and `drive_stop()`. Left/right-to-Motor-A/B and each wheel's
-  polarity are guesses; if a wheel spins the wrong way, flip its sign in
-  `drive.cpp` rather than rewiring.
+  in place), and `drive_stop()`. `drive.h` also exposes the
+  wheel-to-motor/polarity mapping (`DRIVE_LEFT_MOTOR`/`DRIVE_RIGHT_MOTOR`/
+  `DRIVE_LEFT_SIGN`/`DRIVE_RIGHT_SIGN`) so other modules needing independent
+  per-wheel control — `control.cpp`'s PID loops, notably — reuse the same
+  mapping instead of guessing it again. Left/right-to-Motor-A/B and each
+  wheel's polarity are guesses; if a wheel spins the wrong way, flip its
+  sign in `drive.h` rather than rewiring.
 - **`battery.h`/`battery.cpp`** read the ADC (8-sample average, `ADC_11db`
   attenuation for full 0-3.3V range), convert through the known divider
   ratio, and log the battery voltage (`[BATTERY] ...`) every call, with a
   warning line if it drops below `BATTERY_LOW_VOLTAGE` (3.3V).
+  `battery_get_percent(voltage)` maps that to a rough 0-100% charge
+  estimate via a piecewise-linear 1S LiPo discharge curve — good enough for
+  a dashboard gauge, not a calibrated fuel gauge (it'll read a bit low
+  under load, from voltage sag).
 - **`encoder.h`/`encoder.cpp`** decode each wheel's quadrature encoder via a
   `CHANGE` interrupt on its channel-A pin (reading channel B at that instant
   to get direction), and expose a running signed tick count per wheel via
@@ -114,45 +145,107 @@ matlab/
   encoders aren't wired up yet — `encoder_init()` logs and skips any encoder
   whose pins are unset rather than touching undefined hardware. Suggested
   pins are documented in `encoder.h`; fill them in once mounted, then re-flash.
-- **`mpu9250.h`/`mpu9250.cpp`** talk to the MPU9250 IMU directly over I2C
-  register access (no external library) — accel + gyro from the MPU9250
-  core, plus magnetometer from the embedded AK8963 chip (reached via I2C
-  bypass mode once the MPU9250 is configured). `mpu9250_init()` verifies
-  `WHO_AM_I` on both chips, sets accel/gyro full-scale range and low-pass
-  filtering, and starts the magnetometer in continuous mode.
-  `mpu9250_read()` returns accel (g), gyro (deg/s), mag (µT), and
-  temperature (°C), logging every call (`[MPU9250] ...`). It shares the ToF
-  sensors' I2C bus; suggested pins (INT, address) are documented in
-  `mpu9250.h`.
-- **`maze.h`/`maze.cpp`** hold the maze grid (walls-per-cell bitmask) and a
-  multi-source BFS flood fill that computes each cell's shortest distance
-  (in cell-steps) to a set of goal cells, plus `maze_choose_next_direction()`
-  to pick the best open neighbor. This is pure grid logic ported from the
-  [`mms-c`](../mms-c/Main.c) simulator reference algorithm — no sensor/motor
-  calls — so the search itself doesn't depend on real hardware. Maze size
-  defaults to a full 16x16 grid (`MAZE_WIDTH`/`MAZE_HEIGHT`); change those
-  for a different contest maze size.
-- **`solver.h`/`solver.cpp`** are the hardware glue: `solver_run()` runs the
-  same search-to-center-then-return-to-start loop as `mms-c/Main.c`'s
-  `main()`, but senses walls with `sensor_read_all()` (a wall is "there" if
-  a ToF reading is under `SOLVER_WALL_THRESHOLD_MM`) and moves the real
-  robot with `drive_forward()`/`drive_turn_left()`/`drive_turn_right()`
-  instead of the simulator's `API_*` calls. Movement is timed/open-loop by
-  default (`SOLVER_CELL_MOVE_TIME_MS`, `SOLVER_TURN_90_TIME_MS` — both
-  untuned placeholders); once `encoder.h`'s pins are wired up and
-  `SOLVER_CELL_TICKS` is set to a measured ticks-per-cell value, it switches
-  to counting encoder ticks instead. Not wired into `main.cpp` by default —
-  see the commented-out block at the top of `loop()` to enable it.
-- **`main.cpp`** initializes serial, the motor, encoder, and IMU modules in
-  `setup()`, then runs a **one-shot motion test on every boot**: forward,
-  pivot left, pivot right, then stop — logged via `[MAIN]`/`[DRIVE]`, with
-  encoder ticks printed after each move and one IMU reading per loop
-  iteration (skipped if the MPU9250 didn't initialize). Speeds and
-  durations are untuned placeholders. **The robot moves as soon as it's
-  powered on** — place it in a clear area before flashing/resetting it.
-  (The ToF sensor/battery/telemetry modules exist in the tree but aren't
-  called from this build — see the git history for a version that wires
-  them in.)
+- **`mpu9250.h`/`mpu9250.cpp`** talk to the IMU directly over I2C register
+  access (no external library) — accel + gyro from the MPU9250/9255/6500
+  core (whichever is actually on the board; `mpu9250_init()` checks
+  `WHO_AM_I` and works with any of the three), plus magnetometer from the
+  embedded AK8963 chip when present (MPU9250/9255 only — reached via I2C
+  bypass mode; an MPU6500 has none, and `mpu9250_read()` just leaves the
+  mag fields at zero in that case rather than failing). `mpu9250_init()`
+  sets accel/gyro full-scale range and low-pass filtering and starts the
+  magnetometer in continuous mode when available. `mpu9250_read()` returns
+  accel (g), gyro (deg/s), mag (µT), and temperature (°C), logging every
+  call (`[MPU9250] ...`). It shares the ToF sensors' I2C bus; suggested
+  pins (INT, address) are documented in `mpu9250.h`.
+- **`pid.h`/`pid.cpp`** — a minimal generic PID controller (`pid_ctrl_t` +
+  `pid_update()`), with anti-windup clamping on the integral term. One
+  instance per control loop; gains are set/read independently at runtime
+  (see `control.h`/`comms.h`) rather than baked in at compile time. (Named
+  `pid_ctrl_t`, not `pid_t` — the latter collides with POSIX's process-ID
+  typedef, which Arduino.h pulls in transitively.)
+- **`control.h`/`control.cpp`** — three concrete PID-driven maneuvers, each
+  tunable independently:
+  - `CONTROL_LOOP_STRAIGHT` — dual-wheel encoder speed sync while driving
+    forward (`control_run_straight(target_mm, ...)`). **Needs the encoders
+    physically wired** — see `encoder.h` above — to do anything meaningful.
+  - `CONTROL_LOOP_TURN` — gyro-integrated heading hold while pivoting
+    (`control_run_turn(target_deg, ...)`).
+  - `CONTROL_LOOP_WALLCENTER` — ToF left/right centering while driving
+    forward (`control_run_wallcenter(duration_ms, ...)`).
+  Each `control_run_*()` blocks until its maneuver finishes, hits a hard
+  `CONTROL_MAX_RUN_MS` (5s) safety timeout, or `control_request_abort()` is
+  called — and calls a `tick_cb` every ~10ms so the caller (`comms.cpp`)
+  can stream telemetry and poll for that abort request while the maneuver
+  runs. `WHEEL_DIAMETER_MM`/`ENCODER_TICKS_PER_REV` are geometry guesses -
+  measure and correct them once encoders are mounted.
+- **`comms.h`/`comms.cpp`** implement the serial protocol the dashboard
+  (`tools/dashboard`) speaks: plain-text commands in (`PID <loop> <kp> <ki>
+  <kd>`, `GETPID <loop>`, `RUN <maneuver> <arg>`, `RUN stop`), one JSON
+  telemetry object out per line (sensor/battery/encoder/IMU/PID-debug
+  readings) — both roughly every 50ms when idle, and once per control-loop
+  iteration during a `RUN`. See the comment block at the top of `comms.h`
+  for the exact schema.
+- **`maze.h`/`maze.cpp`** hold the maze grid (walls-per-cell bitmask) and two
+  search algorithms over it, both pure grid logic — no sensor/motor calls —
+  so neither depends on real hardware:
+  - `maze_flood_fill()` — a multi-source BFS that computes each cell's
+    shortest distance (in cell-steps) to a set of goal cells, plus
+    `maze_choose_next_direction()` to pick the best open neighbor. This is
+    ported from the [`mms-c`](../mms-c/Main.c) simulator reference
+    algorithm and is what exploration uses: it only needs to know about
+    walls sensed so far, and adapts as more are discovered.
+  - `maze_plan_min_turn_path()` — Dijkstra over an expanded (cell, heading)
+    state graph, where driving forward one cell and pivoting 90 degrees in
+    place are separately-weighted edges (`MAZE_MOVE_COST`, `MAZE_TURN_COST`
+    — turning costs more, so the cheapest path trades a few extra cells for
+    fewer turns when that's available). This assumes the maze is already
+    fully explored — unlike flood fill it won't self-correct from a wrong
+    guess — and is meant for planning the fast "speed run" once the map is
+    known, since turns cost real time a plain cell-count metric ignores.
+  Maze size defaults to a full 16x16 grid (`MAZE_WIDTH`/`MAZE_HEIGHT`);
+  change those for a different contest maze size. Both algorithms are
+  validated against a host CLI in `tools/maze_cli` — see its README.
+- **`solver.h`/`solver.cpp`** are the single-task hardware glue: `solver_run()`
+  explores using `maze_flood_fill()` (senses walls with `sensor_read_all()` —
+  a wall is "there" if a ToF reading is under `SOLVER_WALL_THRESHOLD_MM` —
+  and moves with `drive_forward()`/`drive_turn_left()`/`drive_turn_right()`
+  in place of the simulator's `API_*` calls), the same
+  search-to-center-then-return-to-start loop as `mms-c/Main.c`'s `main()`.
+  Movement is timed/open-loop by default (`SOLVER_CELL_MOVE_TIME_MS`,
+  `SOLVER_TURN_90_TIME_MS` — both untuned placeholders); once `encoder.h`'s
+  pins are wired up and `SOLVER_CELL_TICKS` is set to a measured
+  ticks-per-cell value, it switches to counting encoder ticks instead. Not
+  wired into `main.cpp` by default — see the commented-out block near the
+  top of `main.cpp` to enable it (in place of the PID dashboard build).
+- **`tasks.h`/`tasks.cpp`** run the same overall solve as `solver.cpp` but
+  split across the ESP32's two cores as separate FreeRTOS tasks, talking
+  over two queues:
+  - **Planning task (core 0)** owns the maze grid and both search
+    algorithms — flood fill while exploring, then `maze_plan_min_turn_path()`
+    once back at the start — and never touches a sensor or motor directly;
+    it only sends action requests (sense/move/turn) and reads back sensed
+    walls.
+  - **Control task (core 1)** owns all hardware I/O: it calls `sensor_init()`
+    itself on startup, then executes each requested action with
+    `drive_forward()`/`drive_turn_left()`/`drive_turn_right()` and reports
+    sensed walls back after every one.
+  During exploration the two necessarily hand off in lockstep (the next
+  decision depends on what the last move sensed), but once the map is known
+  the planning task computes the whole speed-run path up front — see the
+  note in `tasks.cpp` on queueing it further ahead for real overlap between
+  the two cores. `tasks_start()` spawns both tasks and returns immediately;
+  call it once from `setup()` and leave `loop()` idle. This is an
+  alternative to `solver.h`, not a complement to it — see the note in
+  `main.cpp` where both are wired in as opt-in blocks.
+- **`main.cpp`** — **current default build: the PID-tuning dashboard.**
+  Brings up motors, encoders, the IMU, and the ToF sensors in `setup()`,
+  then in `loop()` dispatches incoming serial commands (`comms_poll()`) and
+  sends one telemetry line roughly every 50ms (`comms_tick()`) — see
+  `comms.h` above and `tools/dashboard`. The maze-solving builds
+  (`solver.h`/`tasks.h`) and the earlier bare motion-test wiring are left
+  as commented-out alternatives at the top of the file — mutually
+  exclusive with this build and each other; swap one in once PID is dialed
+  in and you're ready to run the actual maze.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
@@ -164,25 +257,22 @@ in plain C style regardless, so modules stay simple to call from `main`.
 ```
 pio run          # build
 pio run -t upload   # flash to the board
-pio device monitor  # view serial logs (115200 baud)
+pio device monitor  # view serial logs (115200 baud) - or use tools/dashboard instead
 ```
 
-## Live-plotting sensor data in MATLAB
+## Tools
 
-For fine-tuning sensor placement/mounting, `matlab/live_tof_plot.m` opens the
-board's serial port, reads the `DATA,...` telemetry lines, and live-plots
-front/right/left distance over time. The plot is zoomed to a 0-10cm axis with
-0.5cm gridlines and per-sample markers, since that's the near-field range
-that matters for placement tuning.
-
-1. Flash and connect the board (`pio run -t upload`), then **close** any open
-   `pio device monitor`/serial terminal — only one program can hold the serial
-   port at a time.
-2. Open `matlab/live_tof_plot.m` in MATLAB and set `PORT_NAME` at the top
-   (run `serialportlist("available")` in MATLAB if you're not sure which port
-   it is — on Linux it's usually `/dev/ttyUSB0` or `/dev/ttyACM0`).
-3. Run the script. A plot window opens and updates live; close the window to
-   stop.
-
-Requires MATLAB R2019b or newer (uses the built-in `serialport` object — no
-Instrument Control Toolbox needed).
+- **`tools/maze_cli`** — a host-buildable CLI that runs the actual
+  `maze.cpp` algorithm (flood fill + Dijkstra) against a maze, so it can
+  be validated/visualized without hardware or the `mms` simulator's GUI.
+  See its README for the build step and I/O protocol.
+- **`tools/dashboard`** — the local web app for PID tuning, live
+  telemetry, and maze-algorithm validation described above. See its
+  README for setup and usage. It calls `tools/maze_cli` for the maze
+  validator half, and can launch the real `mms` simulator AppImage
+  (`../mms-x86_64.AppImage` relative to this repo, as configured in
+  `tools/dashboard/server.py`) as a separate window for visual/manual
+  reference — scripting that GUI itself to auto-run and report back a
+  path was out of scope given the timeline, so the dashboard's own maze
+  validator (driving the real algorithm code directly) is the primary way
+  to check the algorithm, not the AppImage.

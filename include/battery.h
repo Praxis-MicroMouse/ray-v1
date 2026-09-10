@@ -17,4 +17,10 @@ void battery_init(void);
 // battery voltage in volts. Also logs the reading, with a warning if low.
 float battery_read_voltage(void);
 
+// Rough 1S LiPo state-of-charge estimate (0-100) from a piecewise-linear
+// discharge curve. Good enough for a "roughly how much is left" gauge on
+// the tuning dashboard, not a calibrated fuel gauge - LiPo voltage sag
+// under load will make this read a bit low while driving.
+float battery_get_percent(float voltage);
+
 #endif // BATTERY_H

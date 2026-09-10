@@ -1,6 +1,7 @@
 #include "maze.h"
 
 #include <limits.h>
+#include <stdint.h>
 
 maze_dir_t maze_turn_left(maze_dir_t dir) {
     return (maze_dir_t)((dir + 3) % 4);
@@ -145,4 +146,113 @@ maze_dir_t maze_choose_next_direction(const maze_t *maze, int x, int y, maze_dir
     }
 
     return best_dir;
+}
+
+#define MAZE_STATE_COUNT (MAZE_CELL_COUNT * 4)
+
+static int state_index(int cell_index, maze_dir_t heading) {
+    return cell_index * 4 + heading;
+}
+
+int maze_plan_min_turn_path(const maze_t *maze, maze_cell_t start, maze_dir_t start_heading,
+                             const maze_cell_t *goals, int goal_count,
+                             maze_action_t *out_actions, int max_actions) {
+    static int32_t dist[MAZE_STATE_COUNT];
+    static int32_t prev_state[MAZE_STATE_COUNT];
+    static maze_action_t prev_action[MAZE_STATE_COUNT];
+    static uint8_t visited[MAZE_STATE_COUNT];
+
+    for (int i = 0; i < MAZE_STATE_COUNT; i++) {
+        dist[i] = INT32_MAX;
+        prev_state[i] = -1;
+        visited[i] = 0;
+    }
+
+    int start_state = state_index(maze_index(start.x, start.y), start_heading);
+    dist[start_state] = 0;
+
+    // Plain O(V^2) Dijkstra (V = MAZE_STATE_COUNT, at most 1024 for a
+    // 16x16 maze) - no heap needed at this size, and it's a few
+    // milliseconds at most on an ESP32.
+    for (int iter = 0; iter < MAZE_STATE_COUNT; iter++) {
+        int u = -1;
+        int32_t best = INT32_MAX;
+        for (int i = 0; i < MAZE_STATE_COUNT; i++) {
+            if (!visited[i] && dist[i] < best) {
+                best = dist[i];
+                u = i;
+            }
+        }
+        if (u < 0) {
+            break; // everything left unvisited is unreachable
+        }
+        visited[u] = 1;
+
+        int cell_idx = u / 4;
+        maze_dir_t heading = (maze_dir_t)(u % 4);
+        int x = cell_idx % MAZE_WIDTH;
+        int y = cell_idx / MAZE_WIDTH;
+
+        if (!(maze->walls[cell_idx] & (1 << heading))) {
+            int nx = x;
+            int ny = y;
+            maze_step(&nx, &ny, heading);
+            if (maze_in_bounds(nx, ny)) {
+                int v = state_index(maze_index(nx, ny), heading);
+                int32_t nd = dist[u] + MAZE_MOVE_COST;
+                if (nd < dist[v]) {
+                    dist[v] = nd;
+                    prev_state[v] = u;
+                    prev_action[v] = MAZE_ACTION_FORWARD;
+                }
+            }
+        }
+
+        int v_left = state_index(cell_idx, maze_turn_left(heading));
+        int32_t nd_left = dist[u] + MAZE_TURN_COST;
+        if (nd_left < dist[v_left]) {
+            dist[v_left] = nd_left;
+            prev_state[v_left] = u;
+            prev_action[v_left] = MAZE_ACTION_TURN_LEFT;
+        }
+
+        int v_right = state_index(cell_idx, maze_turn_right(heading));
+        int32_t nd_right = dist[u] + MAZE_TURN_COST;
+        if (nd_right < dist[v_right]) {
+            dist[v_right] = nd_right;
+            prev_state[v_right] = u;
+            prev_action[v_right] = MAZE_ACTION_TURN_RIGHT;
+        }
+    }
+
+    int best_goal_state = -1;
+    int32_t best_goal_dist = INT32_MAX;
+    for (int g = 0; g < goal_count; g++) {
+        int cell_idx = maze_index(goals[g].x, goals[g].y);
+        for (maze_dir_t h = MAZE_NORTH; h <= MAZE_WEST; h = (maze_dir_t)(h + 1)) {
+            int s = state_index(cell_idx, h);
+            if (dist[s] < best_goal_dist) {
+                best_goal_dist = dist[s];
+                best_goal_state = s;
+            }
+        }
+    }
+
+    if (best_goal_state < 0 || best_goal_dist == INT32_MAX) {
+        return 0;
+    }
+
+    static maze_action_t reversed[MAZE_MAX_PATH_LEN];
+    int count = 0;
+    int s = best_goal_state;
+    while (prev_state[s] != -1 && count < MAZE_MAX_PATH_LEN) {
+        reversed[count++] = prev_action[s];
+        s = prev_state[s];
+    }
+
+    int n = (count < max_actions) ? count : max_actions;
+    for (int i = 0; i < n; i++) {
+        out_actions[i] = reversed[count - 1 - i];
+    }
+    return n;
 }

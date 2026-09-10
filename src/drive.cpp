@@ -3,13 +3,7 @@
 
 #include <Arduino.h>
 
-#define DRIVE_LEFT_MOTOR  MOTOR_A
-#define DRIVE_RIGHT_MOTOR MOTOR_B
-
-// If a wheel spins backward for a positive speed during testing, flip
-// its sign here rather than rewiring the driver.
-#define DRIVE_LEFT_SIGN   1
-#define DRIVE_RIGHT_SIGN  1
+// DRIVE_LEFT_MOTOR/RIGHT_MOTOR/LEFT_SIGN/RIGHT_SIGN now live in drive.h.
 
 void drive_forward(int16_t speed) {
     Serial.printf("[DRIVE] forward speed=%d\n", speed);

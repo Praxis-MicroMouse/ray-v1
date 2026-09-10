@@ -16,6 +16,7 @@
 
 #define WHO_AM_I_MPU9250  0x71
 #define WHO_AM_I_MPU9255  0x73
+#define WHO_AM_I_MPU6500  0x70 // same accel/gyro core, no onboard magnetometer
 
 // AK8963 magnetometer (its own chip, reachable once bypass is enabled)
 #define AK8963_ADDR       0x0C
@@ -37,6 +38,7 @@
 
 static float s_mag_asa[3] = { 1.0f, 1.0f, 1.0f }; // per-axis sensitivity adjustment
 static float s_last_mag_ut[3] = { 0.0f, 0.0f, 0.0f };
+static bool s_mag_available = false; // false on an MPU6500 (no AK8963) or if it just didn't respond
 
 static bool write_reg(uint8_t dev_addr, uint8_t reg, uint8_t value) {
     Wire.beginTransmission(dev_addr);
@@ -95,13 +97,21 @@ bool mpu9250_init(void) {
     Wire.begin(MPU9250_I2C_SDA, MPU9250_I2C_SCL);
     pinMode(MPU9250_INT_PIN, INPUT);
 
+    // Tolerant of either chip, since it's not always obvious which one is
+    // actually on a given breakout without checking the silkscreen/WHO_AM_I:
+    // MPU9250/9255 have accel+gyro+mag, MPU6500 is the same accel/gyro core
+    // with no onboard magnetometer.
     uint8_t who_am_i = 0;
     if (!read_regs(MPU9250_I2C_ADDR, REG_WHO_AM_I, &who_am_i, 1)
-        || (who_am_i != WHO_AM_I_MPU9250 && who_am_i != WHO_AM_I_MPU9255)) {
+        || (who_am_i != WHO_AM_I_MPU9250 && who_am_i != WHO_AM_I_MPU9255
+            && who_am_i != WHO_AM_I_MPU6500)) {
         Serial.printf("[MPU9250] init FAILED - WHO_AM_I=0x%02X (addr=0x%02X)\n",
                       who_am_i, MPU9250_I2C_ADDR);
         return false;
     }
+    bool is_6500 = (who_am_i == WHO_AM_I_MPU6500);
+    Serial.printf("[MPU9250] detected %s (WHO_AM_I=0x%02X)\n",
+                  is_6500 ? "MPU6500 (no magnetometer)" : "MPU9250/9255", who_am_i);
 
     write_reg(MPU9250_I2C_ADDR, REG_PWR_MGMT_1, 0x80); // reset
     delay(100);
@@ -114,18 +124,22 @@ bool mpu9250_init(void) {
     write_reg(MPU9250_I2C_ADDR, REG_ACCEL_CONFIG, ACCEL_FS_SEL_4G);
     write_reg(MPU9250_I2C_ADDR, REG_ACCEL_CONFIG2, 0x03);   // accel DLPF ~41Hz
 
-    // Bypass mode: lets us talk to the AK8963 directly at its own address
-    // instead of through the MPU9250's auxiliary I2C master.
-    write_reg(MPU9250_I2C_ADDR, REG_INT_PIN_CFG, 0x02);
-    delay(10);
+    if (is_6500) {
+        s_mag_available = false;
+    } else {
+        // Bypass mode: lets us talk to the AK8963 directly at its own
+        // address instead of through the MPU9250's auxiliary I2C master.
+        write_reg(MPU9250_I2C_ADDR, REG_INT_PIN_CFG, 0x02);
+        delay(10);
 
-    if (!ak8963_init()) {
-        Serial.println("[MPU9250] init FAILED (magnetometer)");
-        return false;
+        s_mag_available = ak8963_init();
+        if (!s_mag_available) {
+            Serial.println("[MPU9250] magnetometer not found - continuing with accel/gyro only");
+        }
     }
 
-    Serial.printf("[MPU9250] init OK (addr=0x%02X, sda=%d, scl=%d)\n",
-                  MPU9250_I2C_ADDR, MPU9250_I2C_SDA, MPU9250_I2C_SCL);
+    Serial.printf("[MPU9250] init OK (addr=0x%02X, sda=%d, scl=%d, mag=%d)\n",
+                  MPU9250_I2C_ADDR, MPU9250_I2C_SDA, MPU9250_I2C_SCL, (int) s_mag_available);
     return true;
 }
 
@@ -151,18 +165,20 @@ bool mpu9250_read(mpu9250_data_t *out) {
     }
     out->temp_c = (temp_raw / 333.87f) + 21.0f;
 
-    uint8_t st1 = 0;
-    if (read_regs(AK8963_ADDR, AK8963_ST1, &st1, 1) && (st1 & 0x01)) {
-        uint8_t mag_raw[7]; // 6 data bytes + ST2 (must be read to latch the data)
-        if (read_regs(AK8963_ADDR, AK8963_HXL, mag_raw, 7)) {
-            bool overflow = (mag_raw[6] & 0x08) != 0; // ST2 HOFL bit
-            if (!overflow) {
-                int16_t mx = (int16_t)((mag_raw[1] << 8) | mag_raw[0]); // mag is little-endian
-                int16_t my = (int16_t)((mag_raw[3] << 8) | mag_raw[2]);
-                int16_t mz = (int16_t)((mag_raw[5] << 8) | mag_raw[4]);
-                s_last_mag_ut[0] = mx * MAG_UT_PER_LSB * s_mag_asa[0];
-                s_last_mag_ut[1] = my * MAG_UT_PER_LSB * s_mag_asa[1];
-                s_last_mag_ut[2] = mz * MAG_UT_PER_LSB * s_mag_asa[2];
+    if (s_mag_available) {
+        uint8_t st1 = 0;
+        if (read_regs(AK8963_ADDR, AK8963_ST1, &st1, 1) && (st1 & 0x01)) {
+            uint8_t mag_raw[7]; // 6 data bytes + ST2 (must be read to latch the data)
+            if (read_regs(AK8963_ADDR, AK8963_HXL, mag_raw, 7)) {
+                bool overflow = (mag_raw[6] & 0x08) != 0; // ST2 HOFL bit
+                if (!overflow) {
+                    int16_t mx = (int16_t)((mag_raw[1] << 8) | mag_raw[0]); // mag is little-endian
+                    int16_t my = (int16_t)((mag_raw[3] << 8) | mag_raw[2]);
+                    int16_t mz = (int16_t)((mag_raw[5] << 8) | mag_raw[4]);
+                    s_last_mag_ut[0] = mx * MAG_UT_PER_LSB * s_mag_asa[0];
+                    s_last_mag_ut[1] = my * MAG_UT_PER_LSB * s_mag_asa[1];
+                    s_last_mag_ut[2] = mz * MAG_UT_PER_LSB * s_mag_asa[2];
+                }
             }
         }
     }

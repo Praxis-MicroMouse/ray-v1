@@ -1,97 +1,58 @@
 #include <Arduino.h>
 #include "motor.h"
-#include "drive.h"
 #include "encoder.h"
 #include "mpu9250.h"
-// #include "sensor.h"     // uncomment to bring the ToF sensors back in
-// #include "telemetry.h"  // uncomment along with sensor.h
-// #include "battery.h"    // uncomment to bring battery monitoring back in
-// #include "maze.h"       // uncomment along with solver.h, to run the maze solver
+#include "sensor.h"
+#include "control.h"
+#include "comms.h"
+// #include "drive.h"      // uncomment for the plain motion-test build below instead
+// #include "telemetry.h"  // uncomment to bring the [SENSOR]-independent DATA, stream back
+// #include "battery.h"    // only needed directly for battery_init(); battery.h's other
+                            // half (battery_get_percent/read_voltage) is already used by comms.cpp
+// #include "maze.h"       // uncomment along with solver.h, to run the maze solver instead
 // #include "solver.h"     // uncomment (needs sensor.h too - the solver senses walls)
+// #include "tasks.h"      // uncomment for the dual-core RTOS version of the solver instead of solver.h
 
-// Motors + encoders + IMU bring-up build. ToF sensor/battery/telemetry/
-// maze-solver modules are untouched in the tree but not wired into main
-// below — the calls are left commented out at each site; uncomment the
-// matching lines (and the #includes above) to bring a module back in.
+// PID-tuning dashboard build (the current default): brings up every
+// sensor/actuator module and talks to tools/dashboard (see its README)
+// over serial using comms.h's line protocol - live telemetry out, PID
+// gains + test maneuvers in. Flash this while tuning the physical robot;
+// swap in the maze-solver blocks above (mutually exclusive with each
+// other and with this) once PID is dialed in and you're ready to run the
+// actual maze.
 //
-// Encoder pins are still unset (see encoder.h) so encoder_init() will log
-// "not configured" and skip them until they're wired up; encoder_get_ticks()
-// stays at 0 until then. MPU9250 is wired per the suggested pins in
-// mpu9250.h - if it's not physically connected yet, mpu9250_init() will
-// fail and this build logs that instead of reading it every loop.
+// Encoder pins are still unset (see encoder.h), so control.h's
+// encoder-based loops (straight-line sync, and the distance/speed
+// telemetry fields) won't do anything meaningful until they're wired up.
 
-static bool s_mpu_ready = false;
-// static bool s_sensors_ready = false;  // uncomment with sensor.h
+#define TELEMETRY_PERIOD_MS 50
+
+static bool s_sensors_ready = false;
+static uint32_t s_last_telemetry_ms = 0;
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    Serial.println("[MAIN] booting (motors + encoders + IMU)...");
+    Serial.println("[MAIN] booting (PID tuning dashboard)...");
     motor_init();
     encoder_init();
-    s_mpu_ready = mpu9250_init();
+    mpu9250_init();
+    s_sensors_ready = sensor_init();
+    control_init();
+    comms_init();
 
-    // s_sensors_ready = sensor_init();  // uncomment with sensor.h
-    // battery_init();                  // uncomment with battery.h
-}
-
-static void print_encoder_ticks(void) {
-    Serial.printf("[MAIN] encoder ticks L=%ld R=%ld\n",
-                  (long)encoder_get_ticks(ENCODER_LEFT),
-                  (long)encoder_get_ticks(ENCODER_RIGHT));
+    if (!s_sensors_ready) {
+        Serial.println("[MAIN] WARNING: ToF sensors failed to init - wall readings will be stale/max-range");
+    }
 }
 
 void loop() {
-    // Uncomment to run the full maze-solving algorithm (search to
-    // center, then back to start) instead of the canned motion test
-    // below - needs sensor.h/maze.h/solver.h included above and
-    // s_sensors_ready wired in setup(). Comment out the motion test
-    // block that follows when enabling this, since both drive the
-    // motors and would otherwise fight each other:
-    // if (s_sensors_ready) {
-    //     solver_run();
-    // }
-    // for (;;) { delay(1000); }  // halt once solved - solver_run() blocks until done
+    comms_poll(); // dispatches PID/RUN/GETPID commands; RUN blocks internally until done/aborted
 
-    // Robot WILL move — place it in a clear area. Speeds/durations are
-    // untuned guesses; adjust once you've seen how it actually moves.
-    Serial.println("[MAIN] motion test starting...");
-    drive_forward(DRIVE_DEFAULT_SPEED);
-    delay(800);
-    drive_stop();
-    print_encoder_ticks();
-    delay(500);
-
-    drive_turn_left(DRIVE_DEFAULT_SPEED);
-    delay(400);
-    drive_stop();
-    print_encoder_ticks();
-    delay(500);
-
-    drive_turn_right(DRIVE_DEFAULT_SPEED);
-    delay(400);
-    drive_stop();
-    print_encoder_ticks();
-    Serial.println("[MAIN] motion test done");
-
-    if (s_mpu_ready) {
-        mpu9250_data_t imu;
-        mpu9250_read(&imu);
+    uint32_t now = millis();
+    if (now - s_last_telemetry_ms >= TELEMETRY_PERIOD_MS) {
+        s_last_telemetry_ms = now;
+        comms_tick(); // one telemetry line; also re-polls, harmless when idle
     }
-
-    // Uncomment to read all three ToF sensors and stream them out over
-    // telemetry (needs sensor.h/telemetry.h included above and
-    // s_sensors_ready declared):
-    // if (s_sensors_ready) {
-    //     sensor_reading_t reading;
-    //     sensor_read_all(&reading);
-    //     telemetry_send(&reading);
-    // }
-
-    // Uncomment to log battery voltage each loop (needs battery.h included
-    // above):
-    // battery_read_voltage();
-
-    delay(2000);  // pause before repeating
 }

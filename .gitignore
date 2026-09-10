@@ -22,3 +22,8 @@
 Thumbs.db
 *.swp
 *~
+
+# tools/ build artifacts
+tools/maze_cli/maze_cli
+__pycache__/
+*.pyc
