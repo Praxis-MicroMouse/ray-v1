@@ -113,7 +113,14 @@ tools/
   on the breakouts, and `Wire.begin()` doesn't reliably enable them itself),
   and reads distances via the Adafruit VL53L0X library in its
   `HIGH_ACCURACY` profile (longer timing budget, lower noise — matters most
-  at the short 0-10cm ranges used for tuning). Every raw reading is run
+  at the short 0-10cm ranges used for tuning). Before calling
+  `Adafruit_VL53L0X::begin()` for each sensor, it does a cheap, bounded I2C
+  presence probe at the VL53L0X's default address and skips that sensor
+  (logging why) if nothing ACKs — `begin()`'s own internal init/calibration
+  polling loop has **no timeout** and has been observed to hang `setup()`
+  forever on a sensor that never responds, taking the whole board (and
+  every telemetry line with it) down; the probe avoids ever entering that
+  path for a sensor that clearly isn't there. Every raw reading is run
   through `filter.h`'s despike+smoothing filter (one instance per channel)
   before being returned, since VL53L0X readings are prone to occasional
   wild single-sample spikes from stray reflections. Every step logs to

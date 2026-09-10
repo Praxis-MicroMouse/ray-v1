@@ -13,12 +13,17 @@
 
 static Adafruit_VL53L0X s_tof[SENSOR_COUNT];
 static filter_t s_filter[SENSOR_COUNT]; // despike + smooth each channel's raw readings - see filter.h
+static bool s_sensor_ok[SENSOR_COUNT] = { false, false, false };
 static const uint8_t s_xshut_pin[SENSOR_COUNT] = {
     SENSOR_XSHUT_FRONT,
     SENSOR_XSHUT_RIGHT,
     SENSOR_XSHUT_LEFT
 };
 static const char *s_name[SENSOR_COUNT] = { "FRONT", "RIGHT", "LEFT" };
+
+// VL53L0X default I2C address before Adafruit_VL53L0X::begin() reassigns
+// it - every sensor answers here right after its XSHUT is released.
+#define SENSOR_DEFAULT_ADDR 0x29
 
 bool sensor_init(void) {
     // Enable the ESP32's internal weak (~45k) pull-ups on SDA/SCL so the
@@ -47,8 +52,25 @@ bool sensor_init(void) {
     // default 0x29 address before the next one appears on the bus.
     for (int i = 0; i < SENSOR_COUNT; i++) {
         filter_init(&s_filter[i]);
+        s_sensor_ok[i] = false;
         digitalWrite(s_xshut_pin[i], HIGH);
         delay(10);
+
+        // Cheap, bounded presence check before calling begin(): if nothing
+        // ACKs at the default address, the sensor isn't there/isn't
+        // powered/isn't wired right - skip it rather than calling
+        // Adafruit_VL53L0X::begin(), whose internal init/calibration
+        // polling loop has no timeout and can block forever (has been
+        // observed to hang setup() indefinitely on an unresponsive
+        // sensor, taking the whole board down with it).
+        Wire.beginTransmission(SENSOR_DEFAULT_ADDR);
+        uint8_t probe_err = Wire.endTransmission();
+        if (probe_err != 0) {
+            Serial.printf("[SENSOR] %s not responding at default address (xshut=%d, i2c_err=%d) - skipping\n",
+                          s_name[i], s_xshut_pin[i], probe_err);
+            all_ok = false;
+            continue;
+        }
 
         // High-accuracy profile: longer timing budget, tighter VCSEL
         // periods -> lower noise, which matters most at short (0-10cm)
@@ -61,6 +83,7 @@ bool sensor_init(void) {
             continue;
         }
 
+        s_sensor_ok[i] = true;
         Serial.printf("[SENSOR] %s init OK (addr=0x%02X, xshut=%d)\n",
                       s_name[i], SENSOR_I2C_ADDR_BASE + i, s_xshut_pin[i]);
     }
@@ -75,6 +98,13 @@ bool sensor_init(void) {
 // its smoothed estimate hasn't finished climbing toward
 // SENSOR_MAX_RANGE_MM yet.
 static uint16_t read_one(sensor_id_t id, bool *in_range) {
+    if (!s_sensor_ok[id]) {
+        // Never initialized (see sensor_init()'s presence probe) - don't
+        // touch the VL53L0X instance at all, just report "out of range".
+        *in_range = false;
+        return (uint16_t) filter_update(&s_filter[id], (float) SENSOR_MAX_RANGE_MM);
+    }
+
     VL53L0X_RangingMeasurementData_t m;
     s_tof[id].rangingTest(&m, false);
 
