@@ -6,7 +6,7 @@ page:
 
 1. **Live telemetry + PID tuning** — connects to the robot over serial
    (using the line protocol in `../../include/comms.h`), graphs ToF/
-   battery/encoder/motor-PWM/IMU data live, and lets you read/set PID
+   battery/encoder/RPM/motor-PWM/IMU data live, and lets you read/set PID
    gains and trigger test maneuvers (`RUN straight/turn/wallcenter`) one
    control loop at a time, watching setpoint-vs-measured live while it
    runs.
@@ -47,10 +47,14 @@ Then open **http://127.0.0.1:5055**.
   hit Connect. The firmware needs to be flashed with the PID-tuning
   dashboard build — that's `src/main.cpp`'s default build as of this
   writing (bringing up `comms.h`/`control.h`). Telemetry starts flowing
-  immediately; the sensor/battery/encoder/PWM/IMU panels update live.
-  The Motor PWM panel shows each wheel's actual last-commanded signed
-  speed (-255..255, from `motor_get_speed()`) — useful for sanity-checking
-  that a PID loop's output is doing something sane before trusting its
+  immediately; the sensor/battery/encoder/RPM/PWM/IMU panels update live.
+  The RPM panel shows motor-shaft speed straight from the encoder pulse
+  rate, and output-shaft speed divided by `ENCODER_GEARBOX_RATIO` in
+  `include/encoder.h` (a 1.0 placeholder until the real GA12-N20 ratio is
+  set there — set it, then output RPM is trustworthy). The Motor PWM
+  panel shows each wheel's actual last-commanded signed speed (-255..255,
+  from `motor_get_speed()`) — useful for sanity-checking that a PID
+  loop's output is doing something sane before trusting its
   setpoint-vs-measured numbers.
 - **PID tuning**: pick a loop tab (straight/turn/wallcenter), read the
   firmware's current gains ("Read from firmware"), adjust Kp/Ki/Kd and

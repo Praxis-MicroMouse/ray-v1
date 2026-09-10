@@ -154,6 +154,24 @@
   </div>
 
   <div class="panel">
+    <h2>RPM</h2>
+    <div class="stat-row"><span class="label">Motor L / R</span><span class="value" id="rpmMotor">-- / --</span></div>
+    <div class="stat-row"><span class="label">Output L / R</span><span class="value" id="rpmOutput">-- / --</span></div>
+    <canvas class="chart" id="rpmChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">motor L</span>
+      <span style="color:#43d17a">motor R</span>
+    </div>
+    <p class="small-note">
+      Motor-shaft RPM comes straight from encoder pulse rate (see
+      <code>encoder_get_motor_rpm()</code>). Output-shaft RPM divides
+      that by <code>ENCODER_GEARBOX_RATIO</code> in <code>encoder.h</code>
+      - currently a 1.0 placeholder, so it reads the same as motor RPM
+      until the real GA12-N20 gearbox ratio is set there.
+    </p>
+  </div>
+
+  <div class="panel">
     <h2>Motor PWM (speed)</h2>
     <div class="stat-row"><span class="label">Left</span><span class="value" id="pwmLVal">0</span></div>
     <div class="pwm-bar"><div class="pwm-bar-zero"></div><div class="pwm-bar-fill" id="pwmLFill"></div></div>
@@ -324,6 +342,8 @@ const tofChart = new RollingChart(document.getElementById("tofChart"),
   [{key:"f",color:"#4ea1ff"},{key:"r",color:"#43d17a"},{key:"l",color:"#ffb84e"}], 150, [0, 500]);
 const encChart = new RollingChart(document.getElementById("encChart"),
   [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
+const rpmChart = new RollingChart(document.getElementById("rpmChart"),
+  [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
 const pwmChart = new RollingChart(document.getElementById("pwmChart"),
   [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, [-255, 255]);
 
@@ -431,6 +451,13 @@ es.onmessage = (ev) => {
     document.getElementById("distL").textContent = d.enc.dl_mm.toFixed(1) + " mm";
     document.getElementById("distR").textContent = d.enc.dr_mm.toFixed(1) + " mm";
     encChart.push({l: d.enc.dl_mm, r: d.enc.dr_mm});
+  }
+  if (d.rpm) {
+    document.getElementById("rpmMotor").textContent =
+      `${d.rpm.motor_l.toFixed(0)} / ${d.rpm.motor_r.toFixed(0)}`;
+    document.getElementById("rpmOutput").textContent =
+      `${d.rpm.out_l.toFixed(0)} / ${d.rpm.out_r.toFixed(0)}`;
+    rpmChart.push({l: d.rpm.motor_l, r: d.rpm.motor_r});
   }
   if (d.pwm) {
     document.getElementById("pwmLVal").textContent = d.pwm.l;

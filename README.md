@@ -47,11 +47,15 @@ modules together.
   to GND), giving a divider ratio of 0.4 — a 3.7V nominal cell (up to 4.2V
   charged) reads back as ~1.2-1.7V at the ADC pin, comfortably inside the
   ESP32's 0-3.3V range.
-- Quadrature wheel encoders — **not wired up yet**. `encoder.h` leaves all
-  four pins unset (`-1`) until they're mounted/tuned; suggested pins once
-  they are:
+- Quadrature wheel encoders (GA12-N20 motors, magnetic Hall encoder on
+  the motor shaft — before the gearbox — 7 pulses/revolution per
+  channel):
   - Left: A = GPIO 4, B = GPIO 16
   - Right: A = GPIO 17, B = GPIO 23
+  - Gearbox ratio is still a placeholder (`ENCODER_GEARBOX_RATIO` in
+    `encoder.h`, currently 1.0) — set it to the real GA12-N20 ratio
+    (e.g. 30/50/100) once known, or output-shaft RPM and `control.h`'s
+    distance-per-tick will both be wrong by that factor.
 - IMU — either an MPU-9250/9255 (accel+gyro+magnetometer) or an MPU-6500
   (same accel/gyro core, no magnetometer); `mpu9250_init()` detects which
   one via `WHO_AM_I` and works with either. Shares the ToF sensors' I2C bus
@@ -158,11 +162,16 @@ tools/
 - **`encoder.h`/`encoder.cpp`** decode each wheel's quadrature encoder via a
   `CHANGE` interrupt on its channel-A pin (reading channel B at that instant
   to get direction), and expose a running signed tick count per wheel via
-  `encoder_get_ticks()` / `encoder_reset()`. The four pins
-  (`ENCODER_LEFT_A_PIN` etc.) are left at `-1` in `encoder.h` since the
-  encoders aren't wired up yet — `encoder_init()` logs and skips any encoder
-  whose pins are unset rather than touching undefined hardware. Suggested
-  pins are documented in `encoder.h`; fill them in once mounted, then re-flash.
+  `encoder_get_ticks()` / `encoder_reset()` — 2 ticks per encoder pulse,
+  since `CHANGE` fires on both edges (`ENCODER_TICKS_PER_MOTOR_REV` = 2 x
+  the datasheet's 7 PPR = 14). `encoder_init()` logs and skips any encoder
+  whose pins are left at `-1` rather than touching undefined hardware
+  (not currently the case — both are wired, see Hardware above).
+  `encoder_get_motor_rpm()`/`encoder_get_output_rpm()` turn the tick rate
+  into motor-shaft/output-shaft RPM, averaged over whatever interval
+  they're actually called at (comms.cpp calls them once per telemetry
+  tick); output RPM divides by `ENCODER_GEARBOX_RATIO`, still a 1.0
+  placeholder pending the real GA12-N20 ratio.
 - **`mpu9250.h`/`mpu9250.cpp`** talk to the IMU directly over I2C register
   access (no external library) — accel + gyro from the MPU9250/9255/6500
   core (whichever is actually on the board; `mpu9250_init()` checks
@@ -184,8 +193,7 @@ tools/
 - **`control.h`/`control.cpp`** — three concrete PID-driven maneuvers, each
   tunable independently:
   - `CONTROL_LOOP_STRAIGHT` — dual-wheel encoder speed sync while driving
-    forward (`control_run_straight(target_mm, ...)`). **Needs the encoders
-    physically wired** — see `encoder.h` above — to do anything meaningful.
+    forward (`control_run_straight(target_mm, ...)`).
   - `CONTROL_LOOP_TURN` — gyro-integrated heading hold while pivoting
     (`control_run_turn(target_deg, ...)`).
   - `CONTROL_LOOP_WALLCENTER` — ToF left/right centering while driving
@@ -194,13 +202,15 @@ tools/
   `CONTROL_MAX_RUN_MS` (5s) safety timeout, or `control_request_abort()` is
   called — and calls a `tick_cb` every ~10ms so the caller (`comms.cpp`)
   can stream telemetry and poll for that abort request while the maneuver
-  runs. `WHEEL_DIAMETER_MM`/`ENCODER_TICKS_PER_REV` are geometry guesses -
-  measure and correct them once encoders are mounted.
+  runs. `WHEEL_DIAMETER_MM` is a measured-by-hand guess (tune it); its
+  `ENCODER_TICKS_PER_REV` is derived from `encoder.h`'s
+  `ENCODER_TICKS_PER_MOTOR_REV` and `ENCODER_GEARBOX_RATIO`, so it's only
+  as accurate as that ratio is.
 - **`comms.h`/`comms.cpp`** implement the serial protocol the dashboard
   (`tools/dashboard`) speaks: plain-text commands in (`PID <loop> <kp> <ki>
   <kd>`, `GETPID <loop>`, `RUN <maneuver> <arg>`, `RUN stop`), one JSON
-  telemetry object out per line (sensor/battery/encoder/IMU/PID-debug
-  readings) — both roughly every 50ms when idle, and once per control-loop
+  telemetry object out per line (sensor/battery/encoder/RPM/PWM/IMU/
+  PID-debug readings) — both roughly every 50ms when idle, and once per control-loop
   iteration during a `RUN`. See the comment block at the top of `comms.h`
   for the exact schema.
 - **`maze.h`/`maze.cpp`** hold the maze grid (walls-per-cell bitmask) and two

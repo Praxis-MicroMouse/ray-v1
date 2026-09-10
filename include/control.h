@@ -4,17 +4,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "encoder.h"
+
 // Concrete PID-driven control loops built on pid.h + drive.h/motor.h +
 // encoder.h/sensor.h/mpu9250.h. Each loop's gains are tunable at runtime
 // (see comms.h for the serial commands that call into this module) so
 // they can be iterated on without reflashing - that's the whole point of
 // the tools/dashboard companion app.
 //
-// Wheel/encoder geometry - TUNE both once the encoders are physically
-// wired (see encoder.h - its pins are still unset as of this writing, so
-// distance/speed numbers derived from them are meaningless until then).
-#define WHEEL_DIAMETER_MM     32.0f
-#define ENCODER_TICKS_PER_REV 12.0f
+// Wheel diameter - TUNE by measuring the actual wheel.
+#define WHEEL_DIAMETER_MM 32.0f
+
+// Ticks per one full wheel/output-shaft revolution, derived from the
+// encoder's motor-shaft spec and the gearbox ratio (see encoder.h) -
+// only as accurate as ENCODER_GEARBOX_RATIO is set there.
+#define ENCODER_TICKS_PER_REV (ENCODER_TICKS_PER_MOTOR_REV * ENCODER_GEARBOX_RATIO)
 
 // Hard safety ceiling on any single RUN maneuver, regardless of whether
 // it reaches its target - guards against a bad gain set driving forever.
