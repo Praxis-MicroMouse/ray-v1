@@ -45,11 +45,6 @@ static void send_telemetry_line(void) {
     float dl_mm = control_ticks_to_mm(enc_l);
     float dr_mm = control_ticks_to_mm(enc_r);
 
-    float motor_rpm_l = encoder_get_motor_rpm(ENCODER_LEFT);
-    float motor_rpm_r = encoder_get_motor_rpm(ENCODER_RIGHT);
-    float out_rpm_l = encoder_get_output_rpm(ENCODER_LEFT);
-    float out_rpm_r = encoder_get_output_rpm(ENCODER_RIGHT);
-
     int16_t pwm_l = motor_get_speed(DRIVE_LEFT_MOTOR);
     int16_t pwm_r = motor_get_speed(DRIVE_RIGHT_MOTOR);
 
@@ -64,7 +59,6 @@ static void send_telemetry_line(void) {
         "\"tof\":{\"f\":%u,\"r\":%u,\"l\":%u},"
         "\"batt\":{\"v\":%.2f,\"pct\":%.0f},"
         "\"enc\":{\"l\":%ld,\"r\":%ld,\"dl_mm\":%.1f,\"dr_mm\":%.1f},"
-        "\"rpm\":{\"motor_l\":%.1f,\"motor_r\":%.1f,\"out_l\":%.1f,\"out_r\":%.1f},"
         "\"pwm\":{\"l\":%d,\"r\":%d},"
         "\"imu\":{\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,\"gx\":%.1f,\"gy\":%.1f,\"gz\":%.1f,\"temp\":%.1f},"
         "\"pid\":{\"loop\":\"%s\",\"sp\":%.1f,\"meas\":%.1f,\"out\":%.1f,\"active\":%s}}\n",
@@ -72,7 +66,6 @@ static void send_telemetry_line(void) {
         sr.front_mm, sr.right_mm, sr.left_mm,
         batt_v, batt_pct,
         (long) enc_l, (long) enc_r, dl_mm, dr_mm,
-        motor_rpm_l, motor_rpm_r, out_rpm_l, out_rpm_r,
         (int) pwm_l, (int) pwm_r,
         imu.accel_g[0], imu.accel_g[1], imu.accel_g[2],
         imu.gyro_dps[0], imu.gyro_dps[1], imu.gyro_dps[2], imu.temp_c,

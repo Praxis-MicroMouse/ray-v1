@@ -26,16 +26,12 @@
 // maneuver live):
 //   {"t":<millis>,"tof":{"f":..,"r":..,"l":..},"batt":{"v":..,"pct":..},
 //    "enc":{"l":..,"r":..,"dl_mm":..,"dr_mm":..},
-//    "rpm":{"motor_l":..,"motor_r":..,"out_l":..,"out_r":..},
 //    "pwm":{"l":..,"r":..},
 //    "imu":{"ax":..,"ay":..,"az":..,"gx":..,"gy":..,"gz":..,"temp":..},
 //    "pid":{"loop":"straight","sp":..,"meas":..,"out":..,"active":true}}
 // "pwm" is each wheel's last-commanded signed motor speed (-255..255,
 // via motor_get_speed()) - what's actually driving the wheel right now,
 // whether idle, mid-RUN-maneuver, or driven some other way.
-// "rpm" is each wheel's motor-shaft and output/wheel-shaft speed (see
-// encoder_get_motor_rpm()/encoder_get_output_rpm() in encoder.h) -
-// output values are only as accurate as ENCODER_GEARBOX_RATIO is set.
 
 void comms_init(void);
 

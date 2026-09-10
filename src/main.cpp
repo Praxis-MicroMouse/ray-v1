@@ -20,10 +20,6 @@
 // swap in the maze-solver blocks above (mutually exclusive with each
 // other and with this) once PID is dialed in and you're ready to run the
 // actual maze.
-//
-// Encoder pins are still unset (see encoder.h), so control.h's
-// encoder-based loops (straight-line sync, and the distance/speed
-// telemetry fields) won't do anything meaningful until they're wired up.
 
 #define TELEMETRY_PERIOD_MS 50
 
