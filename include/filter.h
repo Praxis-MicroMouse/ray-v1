@@ -21,12 +21,13 @@
 //     less smoothing, more responsive).
 
 #define FILTER_SPIKE_THRESHOLD_MM 150.0f
-#define FILTER_EMA_ALPHA          0.35f
+#define FILTER_EMA_ALPHA 0.35f
 
-typedef struct {
+typedef struct
+{
     float estimate;
     float last_raw;
-    bool  initialized;
+    bool initialized;
 } filter_t;
 
 // Resets a filter to a fresh, un-primed state; the first update() call

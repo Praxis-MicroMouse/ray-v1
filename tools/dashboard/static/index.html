@@ -189,6 +189,23 @@
   </div>
 
   <div class="panel">
+    <h2>Motor RPM Sync</h2>
+    <div class="stat-row"><span class="label">Left (A)</span><span class="value" id="rpmLVal">--</span></div>
+    <div class="stat-row"><span class="label">Right (B)</span><span class="value" id="rpmRVal">--</span></div>
+    <canvas class="chart" id="rpmChart" width="600" height="110"></canvas>
+    <div class="legend">
+      <span style="color:#4ea1ff">left</span>
+      <span style="color:#43d17a">right</span>
+    </div>
+    <p class="small-note">
+      Left (A) runs open-loop at a fixed reference PWM; right (B)'s PWM is
+      continuously nudged (proportional control, motor_pid.cpp) so its RPM
+      tracks left's - watch this panel with the PWM panel above to see the
+      sync working.
+    </p>
+  </div>
+
+  <div class="panel">
     <h2>MPU9250 / 6500</h2>
     <div class="stat-row"><span class="label">Accel (g)</span><span class="value" id="imuAccel">--</span></div>
     <div class="stat-row"><span class="label">Gyro (deg/s)</span><span class="value" id="imuGyro">--</span></div>
@@ -348,6 +365,8 @@ const encChart = new RollingChart(document.getElementById("encChart"),
   [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
 const pwmChart = new RollingChart(document.getElementById("pwmChart"),
   [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, [-255, 255]);
+const rpmChart = new RollingChart(document.getElementById("rpmChart"),
+  [{key:"l",color:"#4ea1ff"},{key:"r",color:"#43d17a"}], 150, null);
 
 // Signed -255..255 value -> a bar that grows left (reverse) or right
 // (forward) from a center zero-mark.
@@ -460,6 +479,11 @@ es.onmessage = (ev) => {
     setPwmBar(document.getElementById("pwmLFill"), d.pwm.l);
     setPwmBar(document.getElementById("pwmRFill"), d.pwm.r);
     pwmChart.push({l: d.pwm.l, r: d.pwm.r});
+  }
+  if (d.rpm) {
+    document.getElementById("rpmLVal").textContent = d.rpm.l.toFixed(1);
+    document.getElementById("rpmRVal").textContent = d.rpm.r.toFixed(1);
+    rpmChart.push({l: d.rpm.l, r: d.rpm.r});
   }
   if (d.imu) {
     document.getElementById("imuAccel").textContent =
