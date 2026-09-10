@@ -37,6 +37,15 @@ encoders, IMU, maze-solving logic, etc.) without touching existing ones.
   to GND), giving a divider ratio of 0.4 — a 3.7V nominal cell (up to 4.2V
   charged) reads back as ~1.2-1.7V at the ADC pin, comfortably inside the
   ESP32's 0-3.3V range.
+- Quadrature wheel encoders — **not wired up yet**. `encoder.h` leaves all
+  four pins unset (`-1`) until they're mounted/tuned; suggested pins once
+  they are:
+  - Left: A = GPIO 4, B = GPIO 16
+  - Right: A = GPIO 17, B = GPIO 23
+- MPU-9250 9-DoF IMU (accel/gyro/magnetometer), on the same I2C bus as the
+  ToF sensors (SDA = GPIO 21, SCL = GPIO 22), address 0x68 (AD0 tied low).
+  Suggested INT pin: GPIO 13 (not currently used — the driver polls
+  instead of using the interrupt).
 
 ## Code structure
 
@@ -47,12 +56,20 @@ include/
   motor.h        # public C-style API for the motor driver module
   drive.h        # public C-style API for the simple movement module
   battery.h      # public C-style API for the battery voltage module
+  encoder.h      # public C-style API for the wheel encoder module
+  mpu9250.h      # public C-style API for the IMU module
+  maze.h         # public C-style API for the maze grid + flood-fill search
+  solver.h       # public C-style API for the physical maze-solving run
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
   telemetry.cpp  # streams sensor readings over serial for host tools (e.g. MATLAB)
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   drive.cpp      # simple forward/turn movement built on the motor module
   battery.cpp    # battery voltage divider reading over ADC
+  encoder.cpp    # quadrature encoder tick counting via pin-change interrupts
+  mpu9250.cpp    # MPU9250 accel/gyro/mag driver over raw I2C register access
+  maze.cpp       # maze grid state + flood-fill search (no hardware calls)
+  solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/drive.h
   main.cpp       # setup()/loop() — initializes and calls the modules
 platformio.ini   # board/framework config + library dependencies
 matlab/
@@ -89,14 +106,53 @@ matlab/
   attenuation for full 0-3.3V range), convert through the known divider
   ratio, and log the battery voltage (`[BATTERY] ...`) every call, with a
   warning line if it drops below `BATTERY_LOW_VOLTAGE` (3.3V).
-- **`main.cpp`** initializes serial, the sensor module, the battery module,
-  and the motor module in `setup()`, then runs a **one-shot motion test on
-  every boot**: forward, pivot left, pivot right, then stop — logged via
-  `[MAIN]`/`[DRIVE]`. Speeds and durations are untuned placeholders. **The
-  robot moves as soon as it's powered on** — place it in a clear area before
-  flashing/resetting it. The main `loop()` reads all three sensors and the
-  battery voltage each iteration and sends the sensor reading out over
-  telemetry.
+- **`encoder.h`/`encoder.cpp`** decode each wheel's quadrature encoder via a
+  `CHANGE` interrupt on its channel-A pin (reading channel B at that instant
+  to get direction), and expose a running signed tick count per wheel via
+  `encoder_get_ticks()` / `encoder_reset()`. The four pins
+  (`ENCODER_LEFT_A_PIN` etc.) are left at `-1` in `encoder.h` since the
+  encoders aren't wired up yet — `encoder_init()` logs and skips any encoder
+  whose pins are unset rather than touching undefined hardware. Suggested
+  pins are documented in `encoder.h`; fill them in once mounted, then re-flash.
+- **`mpu9250.h`/`mpu9250.cpp`** talk to the MPU9250 IMU directly over I2C
+  register access (no external library) — accel + gyro from the MPU9250
+  core, plus magnetometer from the embedded AK8963 chip (reached via I2C
+  bypass mode once the MPU9250 is configured). `mpu9250_init()` verifies
+  `WHO_AM_I` on both chips, sets accel/gyro full-scale range and low-pass
+  filtering, and starts the magnetometer in continuous mode.
+  `mpu9250_read()` returns accel (g), gyro (deg/s), mag (µT), and
+  temperature (°C), logging every call (`[MPU9250] ...`). It shares the ToF
+  sensors' I2C bus; suggested pins (INT, address) are documented in
+  `mpu9250.h`.
+- **`maze.h`/`maze.cpp`** hold the maze grid (walls-per-cell bitmask) and a
+  multi-source BFS flood fill that computes each cell's shortest distance
+  (in cell-steps) to a set of goal cells, plus `maze_choose_next_direction()`
+  to pick the best open neighbor. This is pure grid logic ported from the
+  [`mms-c`](../mms-c/Main.c) simulator reference algorithm — no sensor/motor
+  calls — so the search itself doesn't depend on real hardware. Maze size
+  defaults to a full 16x16 grid (`MAZE_WIDTH`/`MAZE_HEIGHT`); change those
+  for a different contest maze size.
+- **`solver.h`/`solver.cpp`** are the hardware glue: `solver_run()` runs the
+  same search-to-center-then-return-to-start loop as `mms-c/Main.c`'s
+  `main()`, but senses walls with `sensor_read_all()` (a wall is "there" if
+  a ToF reading is under `SOLVER_WALL_THRESHOLD_MM`) and moves the real
+  robot with `drive_forward()`/`drive_turn_left()`/`drive_turn_right()`
+  instead of the simulator's `API_*` calls. Movement is timed/open-loop by
+  default (`SOLVER_CELL_MOVE_TIME_MS`, `SOLVER_TURN_90_TIME_MS` — both
+  untuned placeholders); once `encoder.h`'s pins are wired up and
+  `SOLVER_CELL_TICKS` is set to a measured ticks-per-cell value, it switches
+  to counting encoder ticks instead. Not wired into `main.cpp` by default —
+  see the commented-out block at the top of `loop()` to enable it.
+- **`main.cpp`** initializes serial, the motor, encoder, and IMU modules in
+  `setup()`, then runs a **one-shot motion test on every boot**: forward,
+  pivot left, pivot right, then stop — logged via `[MAIN]`/`[DRIVE]`, with
+  encoder ticks printed after each move and one IMU reading per loop
+  iteration (skipped if the MPU9250 didn't initialize). Speeds and
+  durations are untuned placeholders. **The robot moves as soon as it's
+  powered on** — place it in a clear area before flashing/resetting it.
+  (The ToF sensor/battery/telemetry modules exist in the tree but aren't
+  called from this build — see the git history for a version that wires
+  them in.)
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
