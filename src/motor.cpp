@@ -73,3 +73,19 @@ void motor_stop_all(void) {
     motor_set_speed(MOTOR_A, 0);
     motor_set_speed(MOTOR_B, 0);
 }
+
+void motor_brake(motor_id_t motor) {
+    const motor_pins_t *m = &s_motor[motor];
+
+    digitalWrite(m->in1_pin, HIGH);
+    digitalWrite(m->in2_pin, HIGH);
+    ledcWrite(m->pwm_channel, MOTOR_PWM_MAX);
+    s_last_speed[motor] = 0;
+
+    Serial.printf("[MOTOR] %s brake\n", s_name[motor]);
+}
+
+void motor_brake_all(void) {
+    motor_brake(MOTOR_A);
+    motor_brake(MOTOR_B);
+}

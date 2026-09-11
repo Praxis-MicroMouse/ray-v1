@@ -26,13 +26,23 @@ typedef enum {
 void motor_init(void);
 
 // speed: -255 (full reverse) .. 0 (stop) .. 255 (full forward).
-// Out-of-range values are clamped.
+// Out-of-range values are clamped. speed=0 coasts (IN1/IN2 both low -
+// outputs go high-impedance, momentum just spins the motor down on its
+// own) - use motor_brake()/motor_brake_all() instead when momentum
+// carrying the robot past a target is the problem.
 void motor_set_speed(motor_id_t motor, int16_t speed);
 
 // Last speed actually applied via motor_set_speed() (post-clamp), for
 // telemetry/display purposes. 0 until the first motor_set_speed() call.
 int16_t motor_get_speed(motor_id_t motor);
 
-void motor_stop_all(void);
+void motor_stop_all(void); // coast - see motor_set_speed()'s speed=0 note
+
+// Short-brake (TB6612FNG: IN1=IN2=HIGH) - shorts the motor's terminals so
+// its own back-EMF resists the remaining spin, stopping it much faster
+// than coasting. Safe to hold indefinitely (it's not a stall condition -
+// no drive current, just the motor's own kinetic energy dissipating).
+void motor_brake(motor_id_t motor);
+void motor_brake_all(void);
 
 #endif // MOTOR_H

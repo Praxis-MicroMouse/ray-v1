@@ -25,6 +25,6 @@ void drive_turn_right(int16_t speed) {
 }
 
 void drive_stop(void) {
-    Serial.println("[DRIVE] stop");
-    motor_stop_all();
+    Serial.println("[DRIVE] stop (brake)");
+    motor_brake_all();
 }

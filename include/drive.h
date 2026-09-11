@@ -23,6 +23,9 @@
 void drive_forward(int16_t speed);
 void drive_turn_left(int16_t speed);
 void drive_turn_right(int16_t speed);
+
+// Short-brakes both motors (motor_brake_all()) rather than coasting, so
+// momentum doesn't carry the robot past a target distance/heading.
 void drive_stop(void);
 
 #endif // DRIVE_H
