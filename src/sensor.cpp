@@ -9,18 +9,14 @@
 #include "config/pins.h"
 #include "config/sensor_calibration.h"
 
-// Base address used for the first sensor we bring up; the rest get
-// base+1, base+2 assigned before their XSHUT is released.
-#define SENSOR_I2C_ADDR_BASE 0x30
+// Every sensor uses the default address - only one is ever powered on at
+// a time (see service_one_sensor()), so there's nothing to reassign and
+// nothing that could collide.
+#define SENSOR_ADDR 0x29
 
-// VL53L0X default I2C address before Adafruit_VL53L0X::begin() reassigns
-// it - every sensor answers here right after its XSHUT is released.
-#define SENSOR_DEFAULT_ADDR 0x29
-
-static Adafruit_VL53L0X s_tof[SENSOR_COUNT];
-static filter_t s_filter[SENSOR_COUNT]; // despike + smooth each channel's raw readings - see filter.h
+static Adafruit_VL53L0X s_tof; // ONE driver instance, re-begin()'d against whichever physical unit is currently powered
+static filter_t s_filter[SENSOR_COUNT]; // despike + smooth each channel's readings - see filter.h
 static bool s_sensor_ok[SENSOR_COUNT] = { false, false, false };
-static bool s_last_in_range[SENSOR_COUNT] = { false, false, false };
 static const uint8_t s_xshut_pin[SENSOR_COUNT] = {
     PIN_TOF_XSHUT_FRONT,
     PIN_TOF_XSHUT_RIGHT,
@@ -33,112 +29,125 @@ static const float s_offset[SENSOR_COUNT] = { TOF_FRONT_OFFSET_MM, TOF_RIGHT_OFF
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static sensor_reading_t s_latest = { TOF_MAX_RANGE_MM, TOF_MAX_RANGE_MM, TOF_MAX_RANGE_MM, false, false, false };
 
+static int s_next_index = 0; // round-robin cursor for sensor_poll()
+
+// Powers on exactly one physical sensor, re-initializes the shared
+// VL53L0X driver against it, takes one measurement, then powers it back
+// off before returning - every other sensor's XSHUT must already be LOW
+// when this is called. begin() has to run every single time, not just
+// once at boot: pulling XSHUT low is a hardware reset, so the sensor's
+// configuration (VCSEL periods, timing budget, ...) is wiped every time
+// it's powered off and has to be redone on every power-up.
+static bool service_one_sensor(sensor_id_t id, float *out_mm, bool *out_in_range) {
+    digitalWrite(s_xshut_pin[id], HIGH);
+    delay(TOF_XSHUT_BOOT_DELAY_MS);
+
+    // Cheap, bounded presence check before calling begin(): if nothing
+    // ACKs at the default address, the sensor isn't there/isn't
+    // powered/isn't wired right - bail out rather than calling
+    // Adafruit_VL53L0X::begin(), whose internal init/calibration polling
+    // loop has no timeout and can block forever on an unresponsive sensor.
+    Wire.beginTransmission(SENSOR_ADDR);
+    uint8_t probe_err = Wire.endTransmission();
+    if (probe_err != 0) {
+        digitalWrite(s_xshut_pin[id], LOW);
+        return false;
+    }
+
+    // High-accuracy profile: longer timing budget, tighter VCSEL periods
+    // -> lower noise, which matters most at short (0-10cm) range.
+    if (!s_tof.begin(SENSOR_ADDR, false, &Wire, Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY)) {
+        digitalWrite(s_xshut_pin[id], LOW);
+        return false;
+    }
+
+    VL53L0X_RangingMeasurementData_t m;
+    s_tof.rangingTest(&m, false);
+    digitalWrite(s_xshut_pin[id], LOW); // power off before returning, success or not - never two sensors live at once
+
+    if (m.RangeStatus == 4) {
+        *out_mm = (float) TOF_MAX_RANGE_MM;
+        *out_in_range = false;
+    } else {
+        *out_mm = (float) m.RangeMilliMeter;
+        *out_in_range = true;
+    }
+    return true;
+}
+
 bool sensor_init(void) {
     // Enable the ESP32's internal weak (~45k) pull-ups on SDA/SCL so the
     // bus has a defined idle-high level even without external pull-up
     // resistors on the sensor breakouts. Weak compared to a proper
-    // external 2.2k-4.7k pull-up per line - if readings are still noisy
-    // with three devices on one bus, add real resistors.
+    // external 2.2k-4.7k pull-up per line - if a sensor is intermittently
+    // failing to respond, add real resistors before suspecting anything else.
     pinMode(PIN_I2C_SDA, INPUT_PULLUP);
     pinMode(PIN_I2C_SCL, INPUT_PULLUP);
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-    // Hold every sensor in reset (XSHUT low) first.
+    // Hold every sensor in reset (XSHUT low) first - exactly one is ever
+    // brought out of reset at a time, by service_one_sensor().
     for (int i = 0; i < SENSOR_COUNT; i++) {
         pinMode(s_xshut_pin[i], OUTPUT);
         digitalWrite(s_xshut_pin[i], LOW);
+        filter_init(&s_filter[i]);
     }
     delay(10);
 
     bool all_ok = true;
-
-    // Bring sensors up one at a time so each can be moved off the
-    // default 0x29 address before the next one appears on the bus.
     for (int i = 0; i < SENSOR_COUNT; i++) {
-        filter_init(&s_filter[i]);
-        s_sensor_ok[i] = false;
-        digitalWrite(s_xshut_pin[i], HIGH);
-        delay(10);
+        float mm;
+        bool in_range;
+        bool ok = service_one_sensor((sensor_id_t)i, &mm, &in_range);
+        s_sensor_ok[i] = ok;
 
-        // Cheap, bounded presence check before calling begin(): if
-        // nothing ACKs at the default address, the sensor isn't
-        // there/isn't powered/isn't wired right - skip it rather than
-        // calling Adafruit_VL53L0X::begin(), whose internal init/
-        // calibration polling loop has no timeout and can block forever.
-        Wire.beginTransmission(SENSOR_DEFAULT_ADDR);
-        uint8_t probe_err = Wire.endTransmission();
-        if (probe_err != 0) {
-            Serial.printf("[SENSOR] %s not responding at default address (xshut=%d, i2c_err=%d) - skipping\n",
-                          s_name[i], s_xshut_pin[i], probe_err);
+        if (ok) {
+            float corrected = mm * s_scale[i] + s_offset[i];
+            filter_update(&s_filter[i], corrected); // prime it so sensor_get_latest() is sane immediately
+            Serial.printf("[SENSOR] %s init OK (xshut=%d)\n", s_name[i], s_xshut_pin[i]);
+        } else {
             all_ok = false;
-            continue;
+            Serial.printf("[SENSOR] %s init FAILED (xshut=%d)\n", s_name[i], s_xshut_pin[i]);
         }
-
-        // High-accuracy profile: longer timing budget, tighter VCSEL
-        // periods -> lower noise, which matters most at short (0-10cm)
-        // range where we're fine-tuning sensor placement.
-        if (!s_tof[i].begin(SENSOR_I2C_ADDR_BASE + i, false, &Wire,
-                             Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY)) {
-            Serial.printf("[SENSOR] %s init FAILED (xshut=%d)\n",
-                          s_name[i], s_xshut_pin[i]);
-            all_ok = false;
-            continue;
-        }
-
-        s_tof[i].startRangeContinuous(TOF_CONTINUOUS_PERIOD_MS);
-        s_sensor_ok[i] = true;
-        Serial.printf("[SENSOR] %s init OK (addr=0x%02X, xshut=%d, continuous=%dms)\n",
-                      s_name[i], SENSOR_I2C_ADDR_BASE + i, s_xshut_pin[i], TOF_CONTINUOUS_PERIOD_MS);
     }
 
+    s_next_index = 0;
     return all_ok;
 }
 
-// Applies the per-sensor linear calibration equation, then the despike/
-// EMA filter. Returns the most recently accepted (filtered) estimate
-// even when no new sample is ready this call - *fresh tells the caller
-// whether a new raw sample actually arrived.
-static float poll_one(sensor_id_t id, bool *fresh, bool *in_range) {
-    if (!s_sensor_ok[id]) {
-        *fresh = false;
-        *in_range = false;
-        return s_filter[id].initialized ? s_filter[id].estimate : (float)TOF_MAX_RANGE_MM;
-    }
-
-    if (!s_tof[id].isRangeComplete()) {
-        *fresh = false;
-        *in_range = s_last_in_range[id];
-        return s_filter[id].estimate;
-    }
-
-    uint16_t raw = s_tof[id].readRangeResult();
-    float corrected = raw * s_scale[id] + s_offset[id];
-
-    bool ok = raw < (uint16_t)TOF_MAX_RANGE_MM;
-    if (!ok) {
-        corrected = (float)TOF_MAX_RANGE_MM;
-    }
-
-    s_last_in_range[id] = ok;
-    *fresh = true;
-    *in_range = ok;
-    return filter_update(&s_filter[id], corrected);
-}
-
+// Services exactly ONE physical sensor per call, round-robin - NOT all
+// three. Each call blocks for roughly one full power-on/measure/power-off
+// cycle (boot delay + begin() + a ranging measurement), so a given
+// sensor's reading is only refreshed once every SENSOR_COUNT calls to
+// this function - noticeably staler than continuous-ranging concurrent
+// operation would give, in exchange for only ever having one device live
+// on the bus at a time. steering.cpp measures real elapsed time between
+// its own updates rather than assuming a fixed call rate, precisely
+// because of this.
 void sensor_poll(void) {
-    bool fresh, front_ok, right_ok, left_ok;
+    sensor_id_t id = (sensor_id_t) s_next_index;
+    s_next_index = (s_next_index + 1) % SENSOR_COUNT;
 
-    float front_mm = poll_one(SENSOR_FRONT, &fresh, &front_ok);
-    float right_mm = poll_one(SENSOR_RIGHT, &fresh, &right_ok);
-    float left_mm  = poll_one(SENSOR_LEFT,  &fresh, &left_ok);
+    if (!s_sensor_ok[id]) {
+        return; // never came up at init - don't retry a dead unit forever
+    }
+
+    float mm;
+    bool in_range;
+    if (!service_one_sensor(id, &mm, &in_range)) {
+        return; // a previously-good sensor stopped responding - keep its last estimate rather than snapping to "out of range"
+    }
+
+    float corrected = mm * s_scale[id] + s_offset[id];
+    float filtered = filter_update(&s_filter[id], corrected);
 
     SYNC(s_mux) {
-        s_latest.front_mm = (uint16_t)front_mm;
-        s_latest.right_mm = (uint16_t)right_mm;
-        s_latest.left_mm  = (uint16_t)left_mm;
-        s_latest.front_in_range = front_ok;
-        s_latest.right_in_range = right_ok;
-        s_latest.left_in_range  = left_ok;
+        switch (id) {
+            case SENSOR_FRONT: s_latest.front_mm = (uint16_t)filtered; s_latest.front_in_range = in_range; break;
+            case SENSOR_RIGHT: s_latest.right_mm = (uint16_t)filtered; s_latest.right_in_range = in_range; break;
+            case SENSOR_LEFT:  s_latest.left_mm  = (uint16_t)filtered; s_latest.left_in_range  = in_range; break;
+            default: break;
+        }
     }
 }
 

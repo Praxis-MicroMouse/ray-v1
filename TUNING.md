@@ -71,9 +71,13 @@ Motors stay off. This just confirms every sensor is alive before you
 trust it to drive on their output.
 
 1. Flash and open the serial monitor. You should see a `[SENSOR] ... init
-   OK` line for FRONT, RIGHT, and LEFT. If any says "not responding" or
-   "init FAILED", fix the wiring/address conflict before going further —
-   nothing downstream will work with a sensor that isn't there.
+   OK` line for FRONT, RIGHT, and LEFT. If any says "init FAILED", fix
+   the wiring/power/pull-ups on that sensor before going further —
+   nothing downstream will work with a sensor that isn't there. (Every
+   sensor is powered on and read one at a time, round-robin, and fully
+   powered off in between — see `sensor.h` — so don't expect all three
+   `[BRINGUP]` numbers to update in lockstep on every printed line; each
+   one refreshes roughly once every three lines.)
 2. Watch the `[BRINGUP]` lines. Wave a hand in front of each ToF sensor
    in turn and confirm the matching `front=`/`right=`/`left=` number
    drops as your hand gets closer, and the `(1)`/`(0)` in-range flag

@@ -4,15 +4,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Three ToF (VL53L0X) sensors share one I2C bus (config/pins.h). Each
-// sensor's XSHUT pin is used at boot to bring them up one at a time so
-// each can be assigned its own I2C address, then each is switched into
-// continuous-ranging mode so sensor_loop_tick() can poll for fresh
-// samples cheaply instead of blocking ~20-30ms per sensor per call.
+// Three ToF (VL53L0X) sensors share one I2C bus (config/pins.h), but only
+// ONE is ever powered on at a time: sensor_poll() cycles through them
+// round-robin, fully powering a sensor on (XSHUT high), taking one
+// measurement, then powering it back off (XSHUT low) before moving to
+// the next. Every sensor uses the same default I2C address (there's
+// nothing to reassign, since nothing else is ever live on the bus at the
+// same time) - deliberately traded off against continuous, concurrent
+// operation for the simplicity/robustness of never having more than one
+// device driving the bus.
 //
-// Threading model: sensor_init() + sensor_loop_tick() (see sensor_loop.h)
-// run on the sensor task; sensor_get_latest()/sensor_get_walls() are
-// cross-core-safe and may be called from any task (mouse.cpp, steering.cpp).
+// Threading model: sensor_init() + sensor_poll() (called from
+// sensor_loop_tick() - see sensor_loop.h) run on the sensor task;
+// sensor_get_latest()/sensor_get_walls() are cross-core-safe and may be
+// called from any task (mouse.cpp, steering.cpp).
 
 typedef enum {
     SENSOR_FRONT = 0,
@@ -36,18 +41,19 @@ typedef struct {
     bool right;
 } sensor_walls_t;
 
-// Brings up I2C, resets all sensors via XSHUT, assigns each a unique I2C
-// address, and starts each in continuous-ranging mode. Returns true only
+// Brings up I2C, resets all sensors via XSHUT (holding all three off),
+// then powers each on in turn just long enough to confirm it responds
+// and take one reading, logging OK/FAILED per sensor. Returns true only
 // if all three sensors were found.
 bool sensor_init(void);
 
-// Polls each channel for a fresh sample (non-blocking - VL53L0X's
-// isRangeComplete()/readRangeResult()), runs it through the per-sensor
-// calibration equation (config/sensor_calibration.h) and the despike/EMA
-// filter (filter.h), and updates the shared "latest reading". Call
-// frequently (SENSOR_LOOP_HZ, from sensor_loop_tick()) - each call is
-// cheap (an I2C status read per channel, only occasionally a full
-// distance read).
+// Services exactly ONE physical sensor per call (round-robin: front,
+// right, left, front, ...) - powers it on, takes a measurement, powers
+// it back off, runs the result through the per-sensor calibration
+// equation (config/sensor_calibration.h) and the despike/EMA filter
+// (filter.h), and updates the shared "latest reading" for that channel
+// only. Each call blocks for roughly one full power-cycle (tens of ms) -
+// call it from sensor_loop_tick(), NOT from anything timing-sensitive.
 void sensor_poll(void);
 
 // Cross-core-safe snapshot of the most recent reading sensor_poll() has

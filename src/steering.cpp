@@ -1,5 +1,7 @@
 #include "steering.h"
 
+#include <Arduino.h>
+
 #include "pd.h"
 #include "sensor.h"
 #include "sync.h"
@@ -9,17 +11,28 @@
 static pd_ctrl_t s_pd;
 static steering_mode_t s_mode = STEERING_OFF;
 
+// steering_update() is called once per sensor_loop_tick(), but
+// sensor.cpp's round-robin sensor_poll() no longer runs at a fixed
+// SENSOR_LOOP_HZ cadence - each call blocks for roughly one full
+// sensor power-cycle, several times longer than 1/SENSOR_LOOP_HZ. The
+// derivative term below needs the REAL elapsed time between updates,
+// not an assumed fixed one, so it's measured directly via micros().
+static uint32_t s_last_update_us = 0;
+static bool s_have_last_update = false;
+
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static float s_adjustment = 0.0f;
 
 void steering_init(void) {
     pd_init(&s_pd, PD_STEERING_KP, PD_STEERING_KD);
     s_mode = STEERING_OFF;
+    s_have_last_update = false;
     SYNC(s_mux) { s_adjustment = 0.0f; }
 }
 
 void steering_set_mode(steering_mode_t mode) {
     pd_reset(&s_pd); // fresh derivative history - don't react to a mode-old error jump
+    s_have_last_update = false; // don't compute a dt spanning however long steering was off/on a different mode
     s_mode = mode;
     if (mode == STEERING_OFF) {
         SYNC(s_mux) { s_adjustment = 0.0f; }
@@ -88,7 +101,14 @@ void steering_update(void) {
             break;
     }
 
-    float dt_s = 1.0f / SENSOR_LOOP_HZ;
+    uint32_t now_us = micros();
+    // Fall back to the nominal period for the first update after a mode
+    // change (has_prev is false then anyway, so this dt doesn't feed a
+    // real derivative) rather than measuring against a stale timestamp.
+    float dt_s = s_have_last_update ? (now_us - s_last_update_us) / 1000000.0f : (1.0f / SENSOR_LOOP_HZ);
+    s_last_update_us = now_us;
+    s_have_last_update = true;
+
     float adjustment = pd_update_error(&s_pd, error, dt_s);
     adjustment = constrain_f(adjustment, -STEERING_ADJUST_LIMIT_DEG_S, STEERING_ADJUST_LIMIT_DEG_S);
 

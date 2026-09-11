@@ -67,12 +67,14 @@
 #define TOF_FILTER_SPIKE_THRESHOLD_MM 150.0f
 #define TOF_FILTER_EMA_ALPHA          0.35f
 
-// VL53L0X continuous-ranging sample period. Each channel free-runs at
-// this rate in the background (chip-side) once sensor_init() starts it;
-// sensor_loop_tick() just polls for whichever channel has a fresh sample
-// ready, instead of blocking ~20-30ms per sensor per call the way a
-// single-shot rangingTest() would. Lower = fresher data, higher I2C/bus
-// load; 20ms matches the VL53L0X's default measurement timing budget.
-#define TOF_CONTINUOUS_PERIOD_MS 20
+// Time to wait after releasing a sensor's XSHUT (powering it on) before
+// it's safe to talk to it over I2C - only one sensor is ever powered on
+// at a time (see sensor.cpp's service_one_sensor()), so this delay is
+// paid on every single reading, not just once at boot. 10ms is a
+// conservative starting point (VL53L0X boot time is normally much
+// shorter); if a sensor shows "init FAILED" only during the round-robin
+// cycle - never at sensor_init()'s first pass - try raising this before
+// suspecting the sensor itself.
+#define TOF_XSHUT_BOOT_DELAY_MS 10
 
 #endif // CONFIG_SENSOR_CALIBRATION_H

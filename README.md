@@ -35,7 +35,7 @@ pd.h              generic PD controller (no integral) - pure math, unit tested
 motion.h          two profile_t instances (forward, rotation) + move()/turn()/spin_turn() - cross-task-safe
 drive_controller.h  PD(target vs actual) + per-wheel feedforward -> battery-compensated motor voltage
 steering.h        continuous cross-track correction from the side ToF sensors -> feeds drive_controller's rotation target
-sensor.h          ToF bring-up (continuous ranging mode) + per-sensor calibration + wall booleans
+sensor.h          ToF bring-up (one sensor powered at a time, round-robin) + per-sensor calibration + wall booleans
 maze.h            flood-fill (exploration) + Dijkstra turn-minimizing planner (speed run) - unchanged logic from v1
 mouse.h           high-level search/turn/centering behavior built on all of the above
 control_loop.h / sensor_loop.h / tasks.h   the two fixed-rate ticks + the FreeRTOS task wiring
@@ -147,9 +147,14 @@ replaces both with the single pipeline described above:
   an optional enhancement it explicitly supports, not a requirement), so
   going IMU-less isn't a gap relative to the reference design — this
   firmware leans fully into that approach.
-- **Continuous ToF ranging mode** (`sensor.cpp`) instead of blocking
-  single-shot reads, so the sensor loop isn't spending 20-30ms per
-  sensor per poll.
+- **One ToF sensor powered on at a time** (`sensor.cpp`): `sensor_poll()`
+  round-robins the three sensors, fully powering each on (XSHUT),
+  reading it, and powering it back off before moving to the next — never
+  more than one device live on the shared I2C bus, at the cost of each
+  sensor's reading only refreshing once every three poll calls instead
+  of continuously. `steering.cpp` measures real elapsed time between its
+  own updates (rather than assuming a fixed poll rate) specifically
+  because of this.
 - **Dual-core-correct locking** (`sync.h`): shared state crossing a task
   boundary uses a `portMUX_TYPE` spinlock, not `noInterrupts()`/
   `interrupts()` — the latter only blocks the *current* ESP32 core and
