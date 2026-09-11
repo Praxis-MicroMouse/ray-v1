@@ -3,14 +3,16 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+#include "config/pins.h"
+
 typedef struct {
     int8_t pin_a;
     int8_t pin_b;
 } encoder_pins_t;
 
 static const encoder_pins_t s_pins[ENCODER_COUNT] = {
-    { ENCODER_LEFT_A_PIN,  ENCODER_LEFT_B_PIN  },
-    { ENCODER_RIGHT_A_PIN, ENCODER_RIGHT_B_PIN }
+    { PIN_ENCODER_LEFT_A,  PIN_ENCODER_LEFT_B  },
+    { PIN_ENCODER_RIGHT_A, PIN_ENCODER_RIGHT_B }
 };
 static const char *s_name[ENCODER_COUNT] = { "LEFT", "RIGHT" };
 

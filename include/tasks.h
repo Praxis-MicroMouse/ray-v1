@@ -1,26 +1,31 @@
 #ifndef TASKS_H
 #define TASKS_H
 
-// Splits the maze run across the ESP32's two cores as two FreeRTOS
-// tasks, communicating over queues (see tasks.cpp):
+// Splits the robot across the ESP32's two cores as three FreeRTOS tasks.
+// This is the ONLY module that calls xTaskCreatePinnedToCore - every
+// other module here exposes a plain init()/tick() (or a single blocking
+// run()) and stays agnostic of how/when it gets called.
 //
-//   - Core 0 (PRO_CPU) - "planning" task: owns the maze grid, runs
-//     flood-fill during exploration and the Dijkstra min-turn planner
-//     (maze.h) for the speed run afterward. Pure computation - it never
-//     touches a sensor or motor directly, only sends action requests
-//     ("move forward", "turn left/right", "sense") and reads back wall
-//     sensing results.
-//   - Core 1 (APP_CPU) - "control" task: owns all hardware I/O. It reads
-//     the ToF sensors (sensor.h) and drives the motors (drive.h) one
-//     requested action at a time, reporting sensed walls back after
-//     every action.
+//   - "control" task (core 1, highest priority): control_loop.h's fast,
+//     deterministic tick - odometry -> motion profiles -> PD+FF -> motor
+//     voltage - at a fixed CONTROL_LOOP_HZ via vTaskDelayUntil(). Never
+//     touches I2C or Serial; nothing may block it.
+//   - "sensor" task (core 0, medium priority): sensor_loop.h's ToF
+//     poll + steering update + periodic battery read, at SENSOR_LOOP_HZ.
+//     Deliberately on the OTHER core from "control" so its I2C
+//     transactions can never stall the motor loop's timing.
+//   - "top" task (core 0, normal priority): calls whatever function is
+//     passed to tasks_start() - mouse_run() (mouse.h) for the real maze
+//     run, or one of bench.h's routines for a bench-test build. Either
+//     way it's a long blocking sequence of motion_move()/motion_turn()
+//     calls that just waits on state the other two tasks maintain in the
+//     background, then idles once the function returns.
 //
-// Arduino's own setup()/loop() already run pinned to core 1 by default;
-// tasks_start() spawns two *additional* tasks rather than replacing
-// that, so call it once near the end of setup() (after motor_init()) and
-// leave loop() idle, or doing something unrelated (e.g. battery/IMU
-// logging) - the maze run itself happens entirely inside these two
-// tasks. The control task calls sensor_init() itself on startup.
-void tasks_start(void);
+// Call tasks_start() once from setup(), after motor_init()/encoder_init()/
+// button_init(); leave loop() idle afterward.
+
+typedef void (*tasks_top_level_fn_t)(void);
+
+void tasks_start(tasks_top_level_fn_t top_level_fn);
 
 #endif // TASKS_H

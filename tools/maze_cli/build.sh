@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds maze_cli against the real ../../src/maze.cpp (and solver.h for
-# its timing constants - solver.cpp itself is NOT linked in, it needs
-# Arduino.h). Run from anywhere; output goes to ./maze_cli next to this
-# script.
+# Builds maze_cli against the real ../../src/maze.cpp (plus
+# config/motion_tuning.h for a couple of estimate constants - plain
+# macros, no Arduino dependency). Run from anywhere; output goes to
+# ./maze_cli next to this script.
 set -euo pipefail
 cd "$(dirname "$0")"
 

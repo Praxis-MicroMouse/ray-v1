@@ -33,7 +33,15 @@
 #include <vector>
 
 #include "maze.h"
-#include "solver.h" // only for the SOLVER_*_TIME_MS estimate constants - no Arduino dependency
+#include "config/motion_tuning.h" // SEARCH_SPEED_MM_S/SPIN_TURN_OMEGA_DEG_S for the est_time_ms estimate below - plain macros, no Arduino dependency
+
+// Rough time estimate for reporting only (not used by the search/planning
+// logic itself) - mouse.cpp's actual moves/turns are profile-based
+// (accelerate/cruise/brake), so this simple per-cell/per-turn constant
+// necessarily undercounts acceleration time. Good enough for comparing
+// relative path costs between search/speedrun modes.
+static const double CELL_MOVE_TIME_MS = (double) MAZE_CELL_SIZE_MM / SEARCH_SPEED_MM_S * 1000.0;
+static const double TURN_90_TIME_MS = 90.0 / SPIN_TURN_OMEGA_DEG_S * 1000.0;
 
 using namespace std;
 
@@ -122,9 +130,11 @@ struct SearchResult {
     int reached_center_at_step = -1;
 };
 
-// Mirrors ../../src/solver.cpp's solver_run() / ../../src/tasks.cpp's
-// planning_task() move-by-move, except walls come from sense_from_ground_truth()
-// instead of real ToF sensors.
+// Mirrors ../../src/mouse.cpp's search_to() move-by-move (same
+// flood-fill + choose-next-direction sequence), except walls come from
+// sense_from_ground_truth() instead of real ToF sensors, and moves/turns
+// are logged as instantaneous actions rather than run through the real
+// motion profiles.
 static void run_search(const maze_t &truth, maze_cell_t start, const vector<maze_cell_t> &goals,
                         SearchResult &result) {
     maze_t known;
@@ -296,7 +306,7 @@ int main() {
 
         int moves, turns;
         count_moves_turns(result.actions, &moves, &turns);
-        long est_ms = (long) moves * SOLVER_CELL_MOVE_TIME_MS + (long) turns * SOLVER_TURN_90_TIME_MS;
+        long est_ms = (long) (moves * CELL_MOVE_TIME_MS + turns * TURN_90_TIME_MS);
 
         printf("{\"ok\":true,\"width\":%d,\"height\":%d,", MAZE_WIDTH, MAZE_HEIGHT);
         printf("\"start\":{\"x\":%d,\"y\":%d},", start.x, start.y);
@@ -332,7 +342,7 @@ int main() {
 
         int moves, turns;
         count_moves_turns(actions, &moves, &turns);
-        long est_ms = (long) moves * SOLVER_CELL_MOVE_TIME_MS + (long) turns * SOLVER_TURN_90_TIME_MS;
+        long est_ms = (long) (moves * CELL_MOVE_TIME_MS + turns * TURN_90_TIME_MS);
 
         printf("{\"ok\":true,\"width\":%d,\"height\":%d,\"speedrun\":{\"path\":", MAZE_WIDTH, MAZE_HEIGHT);
         print_path(path);

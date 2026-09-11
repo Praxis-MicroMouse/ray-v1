@@ -81,6 +81,9 @@ search's `discovered_walls`):
 }
 ```
 
-`est_time_ms` uses the same `SOLVER_CELL_MOVE_TIME_MS`/`SOLVER_TURN_90_TIME_MS`
-constants as the firmware (`../../include/solver.h`) — it's only as
-accurate as those are tuned.
+`est_time_ms` derives a simple per-cell/per-turn time from the firmware's
+own `SEARCH_SPEED_MM_S`/`SPIN_TURN_OMEGA_DEG_S` constants
+(`../../include/config/motion_tuning.h`) — since the real firmware drives
+each move through an accelerate/cruise/brake profile rather than a
+constant speed, this necessarily undercounts actual run time. Useful for
+comparing path costs between search/speedrun modes, not as a literal ETA.

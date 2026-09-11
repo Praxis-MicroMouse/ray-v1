@@ -3,24 +3,17 @@
 
 #include <stdint.h>
 
+#include "config/maze_layout.h"
+
 // Maze grid representation + flood-fill path search, ported from the
 // mms-c simulator reference algorithm (../mms-c/Main.c) so the same
 // search logic runs on the real robot. Pure grid math here - no sensor
 // or motor calls - so it stays testable independent of hardware. See
-// solver.h for the piece that drives the real robot using this module.
-
-// Standard full-size micromouse maze. Change to match the maze actually
-// being run (e.g. 8x8 for a quarter-maze/half-size contest).
-#define MAZE_WIDTH  16
-#define MAZE_HEIGHT 16
-#define MAZE_CELL_COUNT (MAZE_WIDTH * MAZE_HEIGHT)
-
-// Physical cell size on the actual maze being run (measured: 18cm x
-// 18cm). Referenced by solver.h's wall-detection threshold, and, once
-// encoders are wired, is what SOLVER_CELL_TICKS should be derived from
-// (ticks-per-cell = MAZE_CELL_SIZE_MM / (pi * WHEEL_DIAMETER_MM) *
-// ENCODER_TICKS_PER_REV - see control.h).
-#define MAZE_CELL_SIZE_MM 180.0f
+// mouse.h for the piece that drives the real robot using this module.
+//
+// MAZE_WIDTH/HEIGHT/CELL_SIZE_MM and friends now live in
+// config/maze_layout.h alongside every other tuning constant - this
+// header just uses them.
 
 typedef enum {
     MAZE_NORTH = 0,
@@ -95,16 +88,6 @@ typedef enum {
     MAZE_ACTION_TURN_LEFT,
     MAZE_ACTION_TURN_RIGHT
 } maze_action_t;
-
-// Edge weights for the Dijkstra planner below. Turn costs more than a
-// move so the planner prefers a path with fewer turns over one that's
-// only marginally shorter in cells - tune the ratio to taste.
-#define MAZE_MOVE_COST 2
-#define MAZE_TURN_COST 3
-
-// Generous upper bound on the number of actions a planned path can
-// contain (worst case, no two states are ever revisited).
-#define MAZE_MAX_PATH_LEN (MAZE_CELL_COUNT * 2)
 
 // Finds the min-cost (fewest-turns-biased) path from (start, start_heading)
 // to whichever goal cell/heading combination is cheapest to reach, given
