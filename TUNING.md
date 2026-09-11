@@ -7,15 +7,59 @@ ahead just means chasing a symptom whose real cause is three steps back.
 
 Every constant mentioned here lives in `include/config/` — see
 `README.md`'s config table if you need to find one. Every bench routine
-mentioned here is a build-time `RUN_MODE_*` in `src/main.cpp` — flip the
-`#define RUN_MODE` at the top of that file to the mode named in each
-step, reflash, and read `pio device monitor` (115200 baud).
+mentioned here is a build-time `RUN_MODE_*` in `src/main.cpp`.
 
 **Before you start:** put the mouse somewhere it can move freely —
 several open floor cells at minimum, more for the later steps — and know
 where the power switch is. Nothing here is destructive to the hardware,
 but a badly-tuned controller can genuinely make the mouse dart or spin
 unexpectedly the first time a new gain is loaded.
+
+---
+
+## How to run a mode
+
+1. Open `src/main.cpp` and find this line near the top:
+   ```cpp
+   #define RUN_MODE RUN_MODE_MAZE
+   ```
+2. Change `RUN_MODE_MAZE` to whichever mode the step you're on calls for
+   (see the table below), save.
+3. Build and flash over USB, then open the serial monitor (115200 baud):
+   ```
+   pio run -e esp32dev -t upload
+   pio device monitor
+   ```
+   (or one combined step: `pio run -e esp32dev -t upload -t monitor`).
+   Over the OTA link instead of USB (see the "Wireless testing" section
+   in `README.md` if that's not set up yet):
+   ```
+   pio run -e esp32dev_ota -t upload
+   ```
+4. Read the output. Power-cycle or hit reset to re-run the same mode
+   from the start (most bench modes run once in `setup()` and idle in
+   `loop()` — re-running means resetting the board, not waiting).
+5. **When you're done tuning for the day, set `RUN_MODE` back to
+   `RUN_MODE_MAZE` and reflash** before leaving the mouse alone or
+   committing — every mode except `RUN_MODE_MAZE` and `RUN_MODE_BRINGUP`
+   drives the motors as soon as `setup()` runs, with no confirmation
+   prompt.
+
+| `RUN_MODE_*` | Drives motors? | Used in | What it does |
+|---|---|---|---|
+| `MAZE` | Yes | (the real thing) | Full search + speed run |
+| `BRINGUP` | No | Step 1 | Streams ToF/encoder/battery readings, motors idle |
+| `FEEDFORWARD_LEFT` | Yes (left wheel only) | Step 4 | Open-loop volts-vs-speed sweep, left wheel |
+| `FEEDFORWARD_RIGHT` | Yes (right wheel only) | Step 4 | Open-loop volts-vs-speed sweep, right wheel |
+| `STRAIGHT_TEST` | Yes | Steps 3 & 5 | 4x (720mm forward/back), reports commanded vs. measured distance |
+| `TURN_TEST` | Yes | Steps 3 & 6 | 4x 360° in-place spin, reports commanded vs. measured angle |
+| `WALLCENTER_TEST` | Yes | Step 7 | Drives a corridor with steering engaged, reports cross-track error |
+
+`FEEDFORWARD_LEFT`/`_RIGHT` are the two exceptions to step 3 above: they
+run **standalone**, without `tasks_start()` (see the comment in
+`main.cpp`) — nothing else is fighting for the motor output, which is
+the point, but it also means `button_pressed()`-based abort doesn't work
+in this mode. Know where the power switch is before running either one.
 
 ---
 
