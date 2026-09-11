@@ -12,6 +12,7 @@
 #include "maze.h"
 #include "solver.h"
 #include "tasks.h"
+#include "ota.h"
 
 // ============================================================================
 // BUILD MODE SELECT
@@ -37,13 +38,14 @@
 // #define MODE_MAZE_SOLVER_RTOS     // dual-core FreeRTOS maze solve (tasks.h)
 // #define MODE_ENCODER_CALIBRATION  // stream live encoder ticks for hand-rotation/rolling tick-per-cm tuning
 // #define MODE_STRAIGHT_18CM        // drive forward exactly one maze cell (18cm) via control.h's encoder PID loop
+// #define MODE_FULL_SEND_1M         // open-loop full-PWM straight run, 1m, stopped by encoder distance
 
 #define MODE_COUNT (defined(MODE_MOTORS_ONLY) + defined(MODE_DRIVE_TEST) +          \
                     defined(MODE_SENSOR_TELEMETRY) + defined(MODE_OBSTACLE_AVOID) + \
                     defined(MODE_BATTERY_IMU_BRINGUP) + defined(MODE_MOTOR_PID_SYNC) + \
                     defined(MODE_MAZE_SOLVER) +                                     \
                     defined(MODE_MAZE_SOLVER_RTOS) + defined(MODE_ENCODER_CALIBRATION) + \
-                    defined(MODE_STRAIGHT_18CM))
+                    defined(MODE_STRAIGHT_18CM) + defined(MODE_FULL_SEND_1M))
 
 #if MODE_COUNT == 0
 #error "main.cpp: no MODE_* selected - uncomment exactly one near the top of the file"
@@ -150,6 +152,12 @@ void loop()
 #if defined(MODE_SENSOR_TELEMETRY)
 // Streams all three ToF sensors as DATA, lines for a host tool (e.g.
 // MATLAB) to plot live - see telemetry.h. No motor/drive code runs.
+//
+// Also brings up ota.h's WiFi access point so this works untethered: the
+// laptop connects to the AP directly (see OTA_AP_SSID/PASSWORD in ota.h)
+// and receives the same DATA, lines over UDP broadcast (telemetry.h,
+// TELEMETRY_UDP_PORT) instead of/alongside Serial, and new firmware can be
+// flashed with `pio run -e esp32dev_ota -t upload` instead of USB.
 
 static bool s_sensors_ready = false;
 
@@ -159,6 +167,8 @@ void setup()
     delay(1000);
 
     Serial.println("[MAIN] booting (sensor telemetry)...");
+    ota_init();
+    telemetry_init();
     s_sensors_ready = sensor_init();
     if (!s_sensors_ready)
     {
@@ -168,6 +178,8 @@ void setup()
 
 void loop()
 {
+    ota_handle();
+
     sensor_reading_t reading;
     sensor_read_all(&reading);
     telemetry_send(&reading);
@@ -427,3 +439,62 @@ void loop()
     delay(1000); // one-shot test - nothing to do here
 }
 #endif // MODE_STRAIGHT_18CM
+
+#if defined(MODE_FULL_SEND_1M)
+// "Full send" straight-line stress test: both motors driven open-loop at
+// FULL_SEND_PWM (255, full PWM - no PID, no dual-wheel sync, so whatever
+// speed mismatch exists between the two motors will show up as drift)
+// until the encoder-measured average distance reaches FULL_SEND_TARGET_MM
+// (1m), or FULL_SEND_MAX_RUN_MS elapses as a safety ceiling in case an
+// encoder isn't ticking. One-shot: runs once in setup(), then loop()
+// idles. Robot WILL move fast in a straight-ish line - only run this with
+// a clear 1m+ runway.
+
+#define FULL_SEND_PWM        255    // out of 255 - both motors, full PWM
+#define FULL_SEND_TARGET_MM  1000.0f
+#define FULL_SEND_MAX_RUN_MS 3000   // safety ceiling if encoders don't confirm distance
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(1000);
+
+    Serial.println("[MAIN] booting (full send 1m test)...");
+    motor_init();
+    encoder_init();
+
+    Serial.println("[MAIN] full send: driving 1m at full PWM, open-loop...");
+    encoder_reset(ENCODER_LEFT);
+    encoder_reset(ENCODER_RIGHT);
+
+    Serial.println("[MAIN] full send: starting in 2s - clear the runway now");
+    delay(2000);
+
+    uint32_t start_ms = millis();
+    motor_set_speed(DRIVE_LEFT_MOTOR, DRIVE_LEFT_SIGN * FULL_SEND_PWM);
+    motor_set_speed(DRIVE_RIGHT_MOTOR, DRIVE_RIGHT_SIGN * FULL_SEND_PWM);
+
+    float avg_mm = 0.0f;
+    while (avg_mm < FULL_SEND_TARGET_MM)
+    {
+        if (millis() - start_ms > FULL_SEND_MAX_RUN_MS)
+        {
+            Serial.println("[MAIN] full send: safety time ceiling hit before reaching 1m");
+            break;
+        }
+
+        float left_mm = control_ticks_to_mm(encoder_get_ticks(ENCODER_LEFT));
+        float right_mm = control_ticks_to_mm(encoder_get_ticks(ENCODER_RIGHT));
+        avg_mm = (left_mm + right_mm) / 2.0f;
+    }
+
+    drive_stop();
+    Serial.printf("[MAIN] full send done - measured travel %.1fmm (target %.1fmm) in %lums\n",
+                  avg_mm, FULL_SEND_TARGET_MM, (unsigned long)(millis() - start_ms));
+}
+
+void loop()
+{
+    delay(1000); // one-shot test - nothing to do here
+}
+#endif // MODE_FULL_SEND_1M

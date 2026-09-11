@@ -8,8 +8,8 @@
 // controlled here).
 
 #define MOTOR_A_PWM 26
-#define MOTOR_A_IN1 25
-#define MOTOR_A_IN2 33
+#define MOTOR_A_IN1 33
+#define MOTOR_A_IN2 25
 
 #define MOTOR_B_PWM 27
 #define MOTOR_B_IN1 14

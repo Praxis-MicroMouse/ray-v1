@@ -78,6 +78,7 @@ include/
   maze.h         # public C-style API for the maze grid + flood-fill/Dijkstra search
   solver.h       # public C-style API for the physical maze-solving run (single task)
   tasks.h        # public C-style API for the dual-core RTOS version of the solver
+  ota.h          # public C-style API for the WiFi AP + OTA flashing module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
   filter.cpp     # despike + exponential-smoothing filter, one instance per ToF channel
@@ -92,6 +93,7 @@ src/
   maze.cpp       # maze grid state + flood-fill/Dijkstra search (no hardware calls)
   solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/drive.h
   tasks.cpp      # same solve, split into a planning task (core 0) + control task (core 1)
+  ota.cpp        # WiFi access point + ArduinoOTA bring-up for wireless testing
   main.cpp       # setup()/loop() — MODE_* build-select switches between test/solve builds
 platformio.ini   # board/framework config + library dependencies
 tools/
@@ -131,12 +133,24 @@ tools/
   not tied to ToF sensors specifically, but `sensor.cpp` is its only
   current user.
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
-  machine-parseable serial line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`),
-  kept separate from the `[SENSOR]` debug logs so a host tool (or just your
-  own eyes on the serial monitor) can filter for `DATA,` lines and ignore
-  the rest. Used by `main.cpp`'s `MODE_SENSOR_TELEMETRY` build (the
-  current default) — motors stay off, only the ToF sensors are brought up,
-  for bench-tuning sensor placement/thresholds in isolation.
+  machine-parseable line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`)
+  over Serial, and — once `telemetry_init()` has run and a laptop is
+  connected to `ota.h`'s access point — the same line as a UDP broadcast
+  (`TELEMETRY_UDP_PORT`) so it's readable wirelessly too. Kept separate
+  from the `[SENSOR]` debug logs so a host tool (or just your own eyes on
+  the serial monitor) can filter for `DATA,` lines and ignore the rest.
+  Used by `main.cpp`'s `MODE_SENSOR_TELEMETRY` build (the current default)
+  — motors stay off, only the ToF sensors are brought up, for bench-tuning
+  sensor placement/thresholds in isolation.
+- **`ota.h`/`ota.cpp`** bring up the ESP32 as its own WiFi access point
+  (`OTA_AP_SSID`/`OTA_AP_PASSWORD`) and start `ArduinoOTA` on it, so the
+  testing phase doesn't need a USB cable or a shared router network — the
+  laptop connects straight to the board's AP. See "Wireless testing (OTA)"
+  below for the full workflow. Currently wired into `MODE_SENSOR_TELEMETRY`
+  only; add `ota_init()`/`ota_handle()` calls to another `MODE_*` block the
+  same way if you need OTA there too (careful with motor-driving modes —
+  `ota_handle()` still needs calling regularly, so don't let a maneuver
+  block for too long without it).
 - **`motor.h`** declares the motor module's public interface:
   `motor_id_t` (`MOTOR_A`/`MOTOR_B`), pin constants, `motor_init()`,
   `motor_set_speed(motor, speed)` (-255..255, negative = reverse), and
@@ -278,9 +292,10 @@ tools/
   (motors off, ToF sensors only, streamed as `DATA,` lines — for bench
   sensor tuning). Other modes: `MODE_MOTORS_ONLY`, `MODE_DRIVE_TEST`,
   `MODE_OBSTACLE_AVOID`, `MODE_BATTERY_IMU_BRINGUP`, `MODE_MOTOR_PID_SYNC`,
-  `MODE_ENCODER_CALIBRATION`, `MODE_STRAIGHT_18CM`, `MODE_MAZE_SOLVER`,
-  and `MODE_MAZE_SOLVER_RTOS` — see each block's comment in `main.cpp` for
-  what it does.
+  `MODE_ENCODER_CALIBRATION`, `MODE_STRAIGHT_18CM`, `MODE_FULL_SEND_1M`
+  (open-loop, full PWM, 1m straight-line stress test — see below),
+  `MODE_MAZE_SOLVER`, and `MODE_MAZE_SOLVER_RTOS` — see each block's
+  comment in `main.cpp` for what it does.
 
 Note: implementation files are `.cpp` rather than `.c` because the Arduino/ESP32
 core and the VL53L0X sensor library are C++ (classes, `Wire`, etc.) — a plain C
@@ -294,6 +309,40 @@ pio run          # build
 pio run -t upload   # flash to the board
 pio device monitor  # view serial logs (115200 baud)
 ```
+
+## Wireless testing (OTA)
+
+`MODE_SENSOR_TELEMETRY` (the current default build) brings up its own WiFi
+access point via `ota.h` instead of requiring the laptop and board to
+share a network — the board *is* the network:
+
+1. Flash once over USB as usual (`pio run -t upload`) so `ota_init()` is
+   on the board.
+2. Connect your laptop's WiFi to the access point it starts:
+   SSID `MicroMouse`, password `mmouse2026` (see `include/ota.h` to
+   change either). The board is always reachable at `192.168.4.1`.
+3. **Receiving values:** `telemetry_send()` broadcasts the same `DATA,...`
+   lines it prints over Serial as UDP packets to port `4210`. Listen for
+   them from the laptop with e.g.:
+   ```
+   nc -ul 4210
+   ```
+   or point a small Python/MATLAB UDP socket at `0.0.0.0:4210`.
+4. **Sending code flashes:** build and flash new firmware over the same
+   link instead of USB:
+   ```
+   pio run -e esp32dev_ota -t upload
+   ```
+   `esp32dev_ota` (in `platformio.ini`) is identical to `esp32dev` except
+   `upload_protocol = espota` targeting the board's fixed AP address
+   (`192.168.4.1`) — no mDNS discovery needed since that address never
+   changes on this dedicated AP.
+
+This is scoped to the testing phase and to `MODE_SENSOR_TELEMETRY` only —
+there's no auth on the OTA endpoint beyond the AP's WiFi password, which is
+fine for a private point-to-point link but shouldn't be treated as
+hardened. If you need OTA in another `MODE_*` block, wire in `ota_init()`/
+`ota_handle()`/`telemetry_init()` the same way that block does.
 
 ## Testing
 
