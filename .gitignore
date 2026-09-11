@@ -27,3 +27,8 @@ Thumbs.db
 tools/maze_cli/maze_cli
 __pycache__/
 *.pyc
+
+# Real WiFi credentials - copy include/wifi_credentials.example.h to
+# include/wifi_credentials.h and fill in your network's SSID/password;
+# keeps them out of git history.
+include/wifi_credentials.h

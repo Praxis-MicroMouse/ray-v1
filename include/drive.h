@@ -16,7 +16,7 @@
 #define DRIVE_LEFT_MOTOR  MOTOR_A
 #define DRIVE_RIGHT_MOTOR MOTOR_B
 #define DRIVE_LEFT_SIGN   1
-#define DRIVE_RIGHT_SIGN  1
+#define DRIVE_RIGHT_SIGN  -1
 
 #define DRIVE_DEFAULT_SPEED 150  // out of 255, tune by testing
 
