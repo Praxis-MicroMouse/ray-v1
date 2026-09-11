@@ -15,12 +15,12 @@
 // read the tick delta from odometry (or encoder_get_ticks() directly),
 // divide by N. Average a few trials. Do this per side - it is normal for
 // left/right to differ slightly (encoder disc runout, wheel tolerance).
-#define WHEEL_DIAMETER_MM          32.0f
-#define ENCODER_TICKS_PER_REV_LEFT  715.0f
+#define WHEEL_DIAMETER_MM 32.0f
+#define ENCODER_TICKS_PER_REV_LEFT 715.0f
 #define ENCODER_TICKS_PER_REV_RIGHT 715.0f // TODO: measure independently of LEFT
 
 // mm of travel per encoder tick - derived, do not edit directly.
-#define MM_PER_TICK_LEFT  ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_LEFT)
+#define MM_PER_TICK_LEFT ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_LEFT)
 #define MM_PER_TICK_RIGHT ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_RIGHT)
 
 // ---- Turning geometry ----
@@ -39,7 +39,7 @@
 // Starting value below reuses the old turns.h TURNS_WHEEL_TRACK_MM_LEFT
 // (120mm, "tuned + confirmed accurate by testing") halved, since that
 // constant played the same role (track width = 2 * turn radius).
-#define TURN_RADIUS_MM 60.0f
+#define TURN_RADIUS_MM 10.0f
 
 // Degrees of robot rotation per mm of (right-wheel-travel - left-wheel-travel)
 // - derived from TURN_RADIUS_MM, do not edit directly.
@@ -51,17 +51,17 @@
 // ---- Polarity ----
 // Encoder counts backwards while driving forward? Flip the corresponding
 // sign below rather than rewiring/reflashing a pin swap.
-#define ENCODER_LEFT_POLARITY  (+1)
+#define ENCODER_LEFT_POLARITY (+1)
 #define ENCODER_RIGHT_POLARITY (+1)
 
 // A positive commanded voltage/PWM spins a wheel backwards? Flip here.
-#define MOTOR_LEFT_POLARITY  (+1)
+#define MOTOR_LEFT_POLARITY (+1)
 #define MOTOR_RIGHT_POLARITY (-1)
 
 // ---- Robot footprint (mm) ----
 // Used for cell-relative offsets (e.g. how far the mouse's wheel axle
 // sits from a wall it's backed up against). TODO: measure with calipers.
-#define MOUSE_LENGTH_MM 90.0f  // front bumper to back edge
-#define MOUSE_WIDTH_MM  70.0f  // outer edge to outer edge, across the track
+#define MOUSE_LENGTH_MM 90.0f // front bumper to back edge
+#define MOUSE_WIDTH_MM 70.0f  // outer edge to outer edge, across the track
 
 #endif // CONFIG_ROBOT_PHYSICAL_H

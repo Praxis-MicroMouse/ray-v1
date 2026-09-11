@@ -29,19 +29,20 @@
 //   RUN_MODE_WALLCENTER_TEST      - drives a corridor with steering
 //                                   engaged, reports cross-track error.
 //                                   (TUNING.md Step 7)
-#define RUN_MODE_MAZE               1
-#define RUN_MODE_BRINGUP            2
-#define RUN_MODE_FEEDFORWARD_LEFT   3
-#define RUN_MODE_FEEDFORWARD_RIGHT  4
-#define RUN_MODE_STRAIGHT_TEST      5
-#define RUN_MODE_TURN_TEST          6
-#define RUN_MODE_WALLCENTER_TEST    7
+#define RUN_MODE_MAZE 1
+#define RUN_MODE_BRINGUP 2
+#define RUN_MODE_FEEDFORWARD_LEFT 3
+#define RUN_MODE_FEEDFORWARD_RIGHT 4
+#define RUN_MODE_STRAIGHT_TEST 5
+#define RUN_MODE_TURN_TEST 6
+#define RUN_MODE_WALLCENTER_TEST 7
 
-#define RUN_MODE RUN_MODE_MAZE
+#define RUN_MODE RUN_MODE_TURN_TEST
 
 #if RUN_MODE == RUN_MODE_MAZE
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (maze run)...");
@@ -54,13 +55,15 @@ void setup() {
     tasks_start(mouse_run);
 }
 
-void loop() {
+void loop()
+{
     delay(1000); // the whole run happens inside tasks.cpp's three tasks
 }
 
 #elif RUN_MODE == RUN_MODE_BRINGUP
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (bringup check - motors idle)...");
@@ -71,7 +74,8 @@ void setup() {
     sensor_init();
 }
 
-void loop() {
+void loop()
+{
     sensor_poll();
     battery_update();
 
@@ -90,7 +94,8 @@ void loop() {
 
 #elif RUN_MODE == RUN_MODE_FEEDFORWARD_LEFT || RUN_MODE == RUN_MODE_FEEDFORWARD_RIGHT
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (feedforward characterization - STANDALONE, no tasks_start())...");
@@ -107,13 +112,15 @@ void setup() {
 #endif
 }
 
-void loop() {
+void loop()
+{
     delay(1000);
 }
 
 #elif RUN_MODE == RUN_MODE_STRAIGHT_TEST
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (straight test)...");
@@ -125,13 +132,15 @@ void setup() {
     tasks_start(bench_straight_test);
 }
 
-void loop() {
+void loop()
+{
     delay(1000);
 }
 
 #elif RUN_MODE == RUN_MODE_TURN_TEST
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (turn test)...");
@@ -143,13 +152,15 @@ void setup() {
     tasks_start(bench_turn_test);
 }
 
-void loop() {
+void loop()
+{
     delay(1000);
 }
 
 #elif RUN_MODE == RUN_MODE_WALLCENTER_TEST
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     delay(1000);
     Serial.println("[MAIN] booting (wall-center test)...");
@@ -161,7 +172,8 @@ void setup() {
     tasks_start(bench_wallcenter_test);
 }
 
-void loop() {
+void loop()
+{
     delay(1000);
 }
 
