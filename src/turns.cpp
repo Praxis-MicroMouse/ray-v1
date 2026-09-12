@@ -10,7 +10,7 @@
 
 bool turns_init(void)
 {
-    return true; // no MPU9250 fitted - nothing to bring up
+    return true; // no IMU fitted - nothing to bring up
 }
 
 void turn_degrees(float degrees, int16_t speed)

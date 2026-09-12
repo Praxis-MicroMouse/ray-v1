@@ -8,7 +8,7 @@
 #include "drive.h"
 #include "encoder.h"
 #include "sensor.h"
-#include "mpu9250.h"
+#include "turns.h" // TURNS_WHEEL_TRACK_MM - shared pivot-turn geometry
 
 #define CONTROL_LOOP_HZ 100
 #define CONTROL_DT_MS   (1000 / CONTROL_LOOP_HZ)
@@ -104,15 +104,20 @@ void control_run_straight(float target_mm, int16_t base_speed, control_tick_cb_t
     s_debug.active = false;
 }
 
-// Positive gyro-Z is assumed to read as a rightward (clockwise, viewed
-// from above) heading change. If the mouse turns the wrong way relative
-// to target_deg, flip the sign applied to turn_speed below rather than
-// rewiring - same pragmatic approach as drive.cpp's DRIVE_*_SIGN.
+// Positive degrees = rightward/clockwise (viewed from above); if the
+// mouse turns the wrong way, flip DRIVE_LEFT_SIGN/DRIVE_RIGHT_SIGN's
+// roles below rather than negating every call site - same pragmatic
+// approach as drive.h's DRIVE_*_SIGN.
 void control_run_turn(float target_deg, int16_t base_speed, control_tick_cb_t tick_cb) {
     s_abort = false;
     pid_reset(&s_pid[CONTROL_LOOP_TURN]);
+    encoder_reset(ENCODER_LEFT);
+    encoder_reset(ENCODER_RIGHT);
 
-    float heading_deg = 0.0f;
+    float target_arc_mm = fabsf(target_deg) * (float)M_PI / 180.0f * (TURNS_WHEEL_TRACK_MM / 2.0f);
+    int16_t left_dir = (target_deg >= 0.0f) ? 1 : -1;
+    int16_t right_dir = -left_dir;
+
     uint32_t start_ms = millis();
     uint32_t last_ms = start_ms;
 
@@ -123,27 +128,33 @@ void control_run_turn(float target_deg, int16_t base_speed, control_tick_cb_t ti
         float dt_s = (now - last_ms) / 1000.0f;
         last_ms = now;
 
-        mpu9250_data_t imu;
-        mpu9250_read(&imu);
-        heading_deg += imu.gyro_dps[2] * dt_s; // integrated yaw - drifts over time, fine for one pivot
+        float left_mm = fabsf(control_ticks_to_mm(encoder_get_ticks(ENCODER_LEFT)));
+        float right_mm = fabsf(control_ticks_to_mm(encoder_get_ticks(ENCODER_RIGHT)));
+        float measured_arc_mm = (left_mm + right_mm) / 2.0f;
 
-        float output = pid_update(&s_pid[CONTROL_LOOP_TURN], target_deg, heading_deg, dt_s);
-        int16_t turn_speed = (int16_t) constrain(output, (float)-base_speed, (float)base_speed);
+        // error = how far left has out-paced right in traveled arc length
+        // (both wheels should cover equal arcs, just in opposite spin
+        // directions, during a clean pivot); trim each side's speed in
+        // opposite directions to close the gap - same dual-wheel sync
+        // idea as control_run_straight(), applied to a pivot instead of
+        // a straight line.
+        float error = left_mm - right_mm;
+        float correction = pid_update(&s_pid[CONTROL_LOOP_TURN], 0.0f, error, dt_s);
 
-        int16_t left_out  = (int16_t) constrain(DRIVE_LEFT_SIGN  *  turn_speed, -255, 255);
-        int16_t right_out = (int16_t) constrain(DRIVE_RIGHT_SIGN * -turn_speed, -255, 255);
+        int16_t left_out  = (int16_t) constrain(DRIVE_LEFT_SIGN  * left_dir  * (base_speed - correction), -255, 255);
+        int16_t right_out = (int16_t) constrain(DRIVE_RIGHT_SIGN * right_dir * (base_speed + correction), -255, 255);
         motor_set_speed(DRIVE_LEFT_MOTOR, left_out);
         motor_set_speed(DRIVE_RIGHT_MOTOR, right_out);
 
         s_debug.loop = CONTROL_LOOP_TURN;
-        s_debug.setpoint = target_deg;
-        s_debug.measurement = heading_deg;
-        s_debug.output = output;
+        s_debug.setpoint = target_arc_mm;
+        s_debug.measurement = measured_arc_mm;
+        s_debug.output = correction;
         s_debug.active = true;
 
         if (tick_cb) tick_cb();
 
-        if (fabsf(target_deg - heading_deg) < 2.0f) break;
+        if (measured_arc_mm >= target_arc_mm) break;
     }
 
     drive_stop();
@@ -183,6 +194,56 @@ void control_run_wallcenter(uint32_t duration_ms, int16_t base_speed, control_ti
         s_debug.active = true;
 
         if (tick_cb) tick_cb();
+    }
+
+    drive_stop();
+    s_debug.active = false;
+}
+
+// Same ToF centering error/correction as control_run_wallcenter(), but
+// gated on encoder-measured distance instead of a fixed duration - see
+// control.h for why (multi-meter runs need the longer CONTROL_LONG_RUN_MS
+// ceiling, not CONTROL_MAX_RUN_MS).
+void control_run_straight_centered(float target_mm, int16_t base_speed, control_tick_cb_t tick_cb) {
+    s_abort = false;
+    pid_reset(&s_pid[CONTROL_LOOP_WALLCENTER]);
+    encoder_reset(ENCODER_LEFT);
+    encoder_reset(ENCODER_RIGHT);
+
+    uint32_t start_ms = millis();
+    uint32_t last_ms = start_ms;
+
+    while (!s_abort) {
+        uint32_t now = millis();
+        if (now - start_ms > CONTROL_LONG_RUN_MS) break;
+        if (now - last_ms < CONTROL_DT_MS) { delay(1); continue; }
+        float dt_s = (now - last_ms) / 1000.0f;
+        last_ms = now;
+
+        float left_mm = control_ticks_to_mm(encoder_get_ticks(ENCODER_LEFT));
+        float right_mm = control_ticks_to_mm(encoder_get_ticks(ENCODER_RIGHT));
+        float avg_mm = (left_mm + right_mm) / 2.0f;
+
+        sensor_reading_t reading;
+        sensor_read_all(&reading);
+        // positive = closer to the left wall than the right one -> steer right to re-center
+        float error = (float) reading.right_mm - (float) reading.left_mm;
+        float correction = pid_update(&s_pid[CONTROL_LOOP_WALLCENTER], 0.0f, error, dt_s);
+
+        int16_t left_out  = (int16_t) constrain(DRIVE_LEFT_SIGN  * (base_speed + correction), -255, 255);
+        int16_t right_out = (int16_t) constrain(DRIVE_RIGHT_SIGN * (base_speed - correction), -255, 255);
+        motor_set_speed(DRIVE_LEFT_MOTOR, left_out);
+        motor_set_speed(DRIVE_RIGHT_MOTOR, right_out);
+
+        s_debug.loop = CONTROL_LOOP_WALLCENTER;
+        s_debug.setpoint = target_mm;
+        s_debug.measurement = avg_mm;
+        s_debug.output = correction;
+        s_debug.active = true;
+
+        if (tick_cb) tick_cb();
+
+        if (avg_mm >= target_mm) break;
     }
 
     drive_stop();

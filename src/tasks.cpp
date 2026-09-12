@@ -8,7 +8,9 @@
 #include "maze.h"
 #include "sensor.h"
 #include "drive.h"
-#include "solver.h" // reuses its timing/threshold tunables - see solver.h
+#include "control.h"
+#include "turns.h"
+#include "solver.h" // reuses SOLVER_WALL_THRESHOLD_MM - see solver.h
 
 #define PLANNING_CORE 0
 #define CONTROL_CORE  1
@@ -59,19 +61,16 @@ static void control_task(void *pv) {
 
         switch (cmd.type) {
             case CMD_MOVE_FORWARD:
-                drive_forward(DRIVE_DEFAULT_SPEED);
-                delay(SOLVER_CELL_MOVE_TIME_MS); // TUNE - see solver.h
-                drive_stop();
+                // Closed-loop dual-wheel encoder PID (control.h) instead of
+                // open-loop timing - stops at the actual MAZE_CELL_SIZE_MM.
+                control_run_straight(MAZE_CELL_SIZE_MM, DRIVE_DEFAULT_SPEED, nullptr);
                 break;
             case CMD_TURN_LEFT:
-                drive_turn_left(DRIVE_DEFAULT_SPEED);
-                delay(SOLVER_TURN_90_TIME_MS); // TUNE - see solver.h
-                drive_stop();
+                // Encoder-measured pivot (turns.h) instead of a timed guess.
+                turn_left_90(TURNS_DEFAULT_SPEED);
                 break;
             case CMD_TURN_RIGHT:
-                drive_turn_right(DRIVE_DEFAULT_SPEED);
-                delay(SOLVER_TURN_90_TIME_MS); // TUNE - see solver.h
-                drive_stop();
+                turn_right_90(TURNS_DEFAULT_SPEED);
                 break;
             case CMD_HALT:
                 drive_stop();

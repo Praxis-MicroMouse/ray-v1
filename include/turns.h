@@ -5,13 +5,19 @@
 #include <stdbool.h>
 
 // Pivot-turn maneuvers, measured via the wheel encoders (encoder.h) - no
-// MPU9250 fitted, so heading can't be gyro-integrated the way
-// control.h's CONTROL_LOOP_TURN was originally meant to. During a pivot
-// (wheels spinning in opposite directions, same speed) each wheel travels
-// an arc of length theta * (TURNS_WHEEL_TRACK_MM / 2) - target_ticks is
-// derived from that via control.h's control_ticks_to_mm(), so it reuses
-// the already-measured WHEEL_DIAMETER_MM/ENCODER_TICKS_PER_REV instead of
-// needing its own calibration constant for that part.
+// gyro/IMU fitted, so heading is tracked from wheel travel instead of
+// integrated angular rate (same approach control.h's CONTROL_LOOP_TURN
+// PID loop uses). During a pivot (wheels spinning in opposite directions,
+// same speed) each wheel travels an arc of length theta * (TURNS_WHEEL_TRACK_MM
+// / 2) - target_ticks is derived from that via control.h's
+// control_ticks_to_mm(), so it reuses the already-measured
+// WHEEL_DIAMETER_MM/ENCODER_TICKS_PER_REV instead of needing its own
+// calibration constant for that part.
+//
+// This module is the open-loop-timed-free, no-PID sibling of
+// control_run_turn() - a plain constant-speed pivot to a target arc
+// length, no dual-wheel correction while it runs. Use control_run_turn()
+// instead when the two wheels need active speed-matching mid-turn.
 //
 // TURNS_WHEEL_TRACK_MM (distance between the two wheels' contact
 // centers) is an unverified starting guess below - measure it with a
@@ -30,7 +36,7 @@
 #define TURNS_DEFAULT_SPEED 150     // out of 255 - pivot turns don't need full PWM like straight runs
 #define TURNS_MAX_RUN_MS 3000       // safety ceiling if encoders don't confirm the turn completed
 
-// No MPU9250 to bring up - kept as a function so call sites don't need to
+// No IMU to bring up - kept as a function so call sites don't need to
 // change if a gyro is added back later. Currently just a no-op.
 bool turns_init(void);
 

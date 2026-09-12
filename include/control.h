@@ -7,8 +7,8 @@
 #include "motor.h"
 
 // Concrete PID-driven control loops built on pid.h + drive.h/motor.h +
-// encoder.h/sensor.h/mpu9250.h. Each loop's gains are tunable at runtime
-// via control_set_gains() so they can be iterated on without reflashing.
+// encoder.h/sensor.h. Each loop's gains are tunable at runtime via
+// control_set_gains() so they can be iterated on without reflashing.
 //
 // Wheel/encoder geometry.
 // Both measured directly: ENCODER_TICKS_PER_REV via encoder calibration
@@ -22,13 +22,18 @@
 // it reaches its target - guards against a bad gain set driving forever.
 #define CONTROL_MAX_RUN_MS 5000
 
+// Longer ceiling for control_run_straight_centered() below, which is
+// meant to cover multi-meter runs (a straight-line PID's short 5s
+// ceiling would cut a long run off before it reaches target_mm).
+#define CONTROL_LONG_RUN_MS 15000
+
 // Longer ceiling for control_run_spin() below, which is meant to be held
 // steady long enough to time output-shaft rotations by hand.
 #define CONTROL_SPIN_MAX_RUN_MS 60000
 
 typedef enum {
     CONTROL_LOOP_STRAIGHT = 0,  // dual-wheel encoder speed sync while driving forward
-    CONTROL_LOOP_TURN,          // gyro-integrated heading hold while pivoting
+    CONTROL_LOOP_TURN,          // dual-wheel encoder arc-length sync while pivoting
     CONTROL_LOOP_WALLCENTER,    // ToF left/right centering while driving forward
     CONTROL_LOOP_COUNT
 } control_loop_id_t;
@@ -61,8 +66,26 @@ float control_ticks_to_mm(int32_t ticks);
 // Blocking, by design - the point is to drive the robot through exactly
 // one maneuver at a time.
 void control_run_straight(float target_mm, int16_t base_speed, control_tick_cb_t tick_cb);
+
+// Pivots by an arbitrary signed angle (degrees) - positive turns right/
+// clockwise, negative turns left/counterclockwise - using the same
+// dual-wheel encoder sync idea as control_run_straight(): both wheels
+// are driven at base_speed in opposite directions and the PID trims the
+// difference between their traveled arc lengths so they stay matched
+// until the target arc length (derived from TURNS_WHEEL_TRACK_MM) is
+// reached.
 void control_run_turn(float target_deg, int16_t base_speed, control_tick_cb_t tick_cb);
 void control_run_wallcenter(uint32_t duration_ms, int16_t base_speed, control_tick_cb_t tick_cb);
+
+// Drives forward target_mm, using the CONTROL_LOOP_WALLCENTER PID to
+// steer off the ToF left/right wall distances (same centering error as
+// control_run_wallcenter()) instead of control_run_straight()'s dual-
+// wheel encoder sync - so it tracks the corridor's centerline rather
+// than just holding the two wheels at matched speeds. Encoder ticks
+// still measure progress toward target_mm (ToF sensing alone can't tell
+// distance traveled). Bounded by CONTROL_LONG_RUN_MS rather than the
+// shorter CONTROL_MAX_RUN_MS, for multi-meter runs.
+void control_run_straight_centered(float target_mm, int16_t base_speed, control_tick_cb_t tick_cb);
 
 // Open-loop "just spin this motor and hold" test - no PID, no target,
 // not tied to a CONTROL_LOOP_* id. Meant for benchtop comparisons: e.g.

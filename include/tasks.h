@@ -18,7 +18,7 @@
 // Arduino's own setup()/loop() already run pinned to core 1 by default;
 // tasks_start() spawns two *additional* tasks rather than replacing
 // that, so call it once near the end of setup() (after motor_init()) and
-// leave loop() idle, or doing something unrelated (e.g. battery/IMU
+// leave loop() idle, or doing something unrelated (e.g. battery
 // logging) - the maze run itself happens entirely inside these two
 // tasks. The control task calls sensor_init() itself on startup.
 void tasks_start(void);

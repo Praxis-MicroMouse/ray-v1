@@ -5,7 +5,8 @@
 #include "maze.h"
 #include "sensor.h"
 #include "drive.h"
-#include "encoder.h"
+#include "control.h"
+#include "turns.h"
 
 // A wall is "sensed" on a side if its ToF reading is under the threshold.
 // Absolute wall direction = heading rotated to match front/right/left.
@@ -34,45 +35,30 @@ static void sense_walls(maze_t *maze, int x, int y, maze_dir_t heading) {
     }
 }
 
-// Timed open-loop move by default. If encoder.h's pins have been wired
-// up and SOLVER_CELL_TICKS has been set to a measured value, this
-// switches to counting encoder ticks instead - both branches are
-// compile-time constants, so the unused one is optimized away.
+// Closed-loop move via control.h's dual-wheel encoder PID (control_run_straight())
+// instead of open-loop timing - it corrects for left/right wheel-speed
+// mismatch as it drives, so it actually stops at MAZE_CELL_SIZE_MM
+// instead of "however far the timing guess happened to carry it".
 static void move_forward_one_cell(void) {
     Serial.println("[SOLVER] move forward 1 cell");
-
-    if (SOLVER_CELL_TICKS > 0 && ENCODER_LEFT_A_PIN >= 0 && ENCODER_RIGHT_A_PIN >= 0) {
-        encoder_reset(ENCODER_LEFT);
-        encoder_reset(ENCODER_RIGHT);
-        drive_forward(DRIVE_DEFAULT_SPEED);
-        while (encoder_get_ticks(ENCODER_LEFT) < SOLVER_CELL_TICKS
-               && encoder_get_ticks(ENCODER_RIGHT) < SOLVER_CELL_TICKS) {
-            delay(1);
-        }
-        drive_stop();
-    } else {
-        drive_forward(DRIVE_DEFAULT_SPEED);
-        delay(SOLVER_CELL_MOVE_TIME_MS);
-        drive_stop();
-    }
+    control_run_straight(MAZE_CELL_SIZE_MM, DRIVE_DEFAULT_SPEED, nullptr);
 }
 
 // Pivots one 90-degree step at a time toward `target`, always taking a
 // single right turn for a 90-degree gap and a left turn otherwise (two
 // lefts covers a 180, matching the mms-c reference algorithm's turn_to).
+// Each step uses turns.h's encoder-measured pivot instead of a timed
+// guess, so it stops at the actual 90 degrees regardless of battery sag
+// or surface friction changing the turn rate.
 static void turn_to(maze_dir_t *heading, maze_dir_t target) {
     while (*heading != target) {
         int diff = (target - *heading + 4) % 4;
 
         if (diff == 1) {
-            drive_turn_right(DRIVE_DEFAULT_SPEED);
-            delay(SOLVER_TURN_90_TIME_MS);
-            drive_stop();
+            turn_right_90(TURNS_DEFAULT_SPEED);
             *heading = maze_turn_right(*heading);
         } else {
-            drive_turn_left(DRIVE_DEFAULT_SPEED);
-            delay(SOLVER_TURN_90_TIME_MS);
-            drive_stop();
+            turn_left_90(TURNS_DEFAULT_SPEED);
             *heading = maze_turn_left(*heading);
         }
     }

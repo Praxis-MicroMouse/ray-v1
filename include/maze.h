@@ -16,10 +16,9 @@
 #define MAZE_CELL_COUNT (MAZE_WIDTH * MAZE_HEIGHT)
 
 // Physical cell size on the actual maze being run (measured: 18cm x
-// 18cm). Referenced by solver.h's wall-detection threshold, and, once
-// encoders are wired, is what SOLVER_CELL_TICKS should be derived from
-// (ticks-per-cell = MAZE_CELL_SIZE_MM / (pi * WHEEL_DIAMETER_MM) *
-// ENCODER_TICKS_PER_REV - see control.h).
+// 18cm). Referenced by solver.h's wall-detection threshold and, as the
+// target_mm passed to control_run_straight() (control.h), by
+// solver.cpp/tasks.cpp's per-cell movement.
 #define MAZE_CELL_SIZE_MM 180.0f
 
 typedef enum {

@@ -5,13 +5,15 @@ Firmware for our MicroMouse robot, built with [PlatformIO](https://platformio.or
 ## Purpose
 
 The robot senses walls on three sides (front, left, right) with VL53L0X
-time-of-flight (ToF) sensors, drives two motors, reads wheel encoders and
-a 9-DoF IMU, and monitors its own battery. This firmware brings up every
-one of those, plus:
+time-of-flight (ToF) sensors, drives two motors, reads wheel encoders,
+and monitors its own battery. This firmware brings up every one of
+those, plus:
 
 - **PID-driven control loops** (`control.h`) — dual-wheel encoder speed
-  sync while driving straight, gyro-integrated heading hold while
-  turning, and ToF-based wall centering, each independently tunable.
+  sync while driving straight, dual-wheel encoder arc-length sync while
+  turning, and ToF-based wall centering, each independently tunable. No
+  gyro/IMU on board — heading is tracked from wheel travel instead of
+  integrated angular rate (see `turns.h`/`control.h`'s `CONTROL_LOOP_TURN`).
 - **Maze solving** — flood fill for exploration and a turn-minimizing
   Dijkstra planner for the speed run, ported from the
   [`mms-c`](../mms-c/Main.c) simulator reference algorithm, runnable
@@ -22,7 +24,7 @@ one of those, plus:
 The codebase is written to be modular: each piece of hardware/functionality
 gets its own header + implementation pair. `main.cpp` wires the modules
 together into a set of build modes (motors-only, drive test, sensor
-telemetry, obstacle avoidance, battery/IMU bring-up, motor PID sync,
+telemetry, obstacle avoidance, battery bring-up, motor PID sync,
 encoder calibration, a one-cell straight-line test, and the two maze
 solver variants) — see the top of `main.cpp` for the `MODE_*` switches
 that select which one gets compiled in. Only one build mode is active at
@@ -54,44 +56,38 @@ a time; flip it there and reflash rather than maintaining separate sketches.
 - Quadrature wheel encoders:
   - Left: A = GPIO 4, B = GPIO 16
   - Right: A = GPIO 17, B = GPIO 23
-- IMU — either an MPU-9250/9255 (accel+gyro+magnetometer) or an MPU-6500
-  (same accel/gyro core, no magnetometer); `mpu9250_init()` detects which
-  one via `WHO_AM_I` and works with either. Shares the ToF sensors' I2C bus
-  (SDA = GPIO 21, SCL = GPIO 22), address 0x68 (AD0 tied low). Suggested
-  INT pin: GPIO 13 (not currently used — the driver polls instead of using
-  the interrupt).
+- No IMU/gyro on board — heading during pivots is derived from the wheel
+  encoders instead (see `turns.h`/`control.h`).
 
 ## Code structure
 
 ```
 include/
   sensor.h       # public C-style API for the ToF sensor module
-  filter.h       # public C-style API for the despike+smoothing filter sensor.cpp applies
   telemetry.h    # public C-style API for the serial telemetry module
   motor.h        # public C-style API for the motor driver module
   drive.h        # public C-style API for the simple movement module
   battery.h      # public C-style API for the battery voltage module
   encoder.h      # public C-style API for the wheel encoder module
-  mpu9250.h      # public C-style API for the IMU module
   pid.h          # public C-style API for the generic PID controller
   control.h      # public C-style API for the concrete PID-driven control loops
+  turns.h        # public C-style API for encoder-measured pivot-turn maneuvers
   maze.h         # public C-style API for the maze grid + flood-fill/Dijkstra search
   solver.h       # public C-style API for the physical maze-solving run (single task)
   tasks.h        # public C-style API for the dual-core RTOS version of the solver
   ota.h          # public C-style API for the WiFi AP + OTA flashing module
 src/
   sensor.cpp     # ToF sensor implementation (I2C/XSHUT bring-up, reads, logging)
-  filter.cpp     # despike + exponential-smoothing filter, one instance per ToF channel
   telemetry.cpp  # streams sensor readings over serial as DATA,... lines
   motor.cpp      # motor driver implementation (direction pins + LEDC PWM)
   drive.cpp      # simple forward/turn movement built on the motor module
   battery.cpp    # battery voltage divider reading over ADC + charge estimate
   encoder.cpp    # quadrature encoder tick counting via pin-change interrupts
-  mpu9250.cpp    # MPU9250/6500 accel/gyro/mag driver over raw I2C register access
   pid.cpp        # generic PID controller
   control.cpp    # straight-line/turn/wall-centering PID loops built on pid.h
+  turns.cpp      # encoder-measured pivot turns (no PID, plain constant-speed pivot)
   maze.cpp       # maze grid state + flood-fill/Dijkstra search (no hardware calls)
-  solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/drive.h
+  solver.cpp     # drives the real robot through a maze.cpp search using sensor.h/control.h/turns.h
   tasks.cpp      # same solve, split into a planning task (core 0) + control task (core 1)
   ota.cpp        # WiFi access point + ArduinoOTA bring-up for wireless testing
   main.cpp       # setup()/loop() — MODE_* build-select switches between test/solve builds
@@ -117,21 +113,10 @@ tools/
   polling loop has **no timeout** and has been observed to hang `setup()`
   forever on a sensor that never responds, taking the whole board (and
   every telemetry line with it) down; the probe avoids ever entering that
-  path for a sensor that clearly isn't there. Every raw reading is run
-  through `filter.h`'s despike+smoothing filter (one instance per channel)
-  before being returned, since VL53L0X readings are prone to occasional
-  wild single-sample spikes from stray reflections. Every step logs to
-  serial (`[SENSOR] ...`) for debugging.
-- **`filter.h`/`filter.cpp`** — a small stateful filter for noisy,
-  spike-prone distance readings: a new reading more than
-  `FILTER_SPIKE_THRESHOLD_MM` away from the current estimate is held back
-  unless the *previous* raw reading already agreed with it (so a real fast
-  change, like a wall appearing, still gets through after one confirming
-  sample, while a lone bad reading doesn't move the estimate at all);
-  accepted readings are blended in via exponential moving average
-  (`FILTER_EMA_ALPHA`). Generic (`filter_t` + `filter_update()`), so it's
-  not tied to ToF sensors specifically, but `sensor.cpp` is its only
-  current user.
+  path for a sensor that clearly isn't there. Readings are returned raw
+  (unfiltered) - VL53L0X `RangeStatus == 4` readings are reported as
+  out-of-range (`SENSOR_MAX_RANGE_MM`) rather than smoothed over. Every
+  step logs to serial (`[SENSOR] ...`) for debugging.
 - **`telemetry.h`/`telemetry.cpp`** print one sensor reading per call as a
   machine-parseable line (`DATA,<millis>,<front_mm>,<right_mm>,<left_mm>`)
   over Serial, and — once `telemetry_init()` has run and a laptop is
@@ -183,18 +168,6 @@ tools/
   any encoder whose pins (`ENCODER_LEFT_A_PIN` etc.) are set to `-1` rather
   than touching undefined hardware — not currently the case, both are wired
   per the pins listed under Hardware above.
-- **`mpu9250.h`/`mpu9250.cpp`** talk to the IMU directly over I2C register
-  access (no external library) — accel + gyro from the MPU9250/9255/6500
-  core (whichever is actually on the board; `mpu9250_init()` checks
-  `WHO_AM_I` and works with any of the three), plus magnetometer from the
-  embedded AK8963 chip when present (MPU9250/9255 only — reached via I2C
-  bypass mode; an MPU6500 has none, and `mpu9250_read()` just leaves the
-  mag fields at zero in that case rather than failing). `mpu9250_init()`
-  sets accel/gyro full-scale range and low-pass filtering and starts the
-  magnetometer in continuous mode when available. `mpu9250_read()` returns
-  accel (g), gyro (deg/s), mag (µT), and temperature (°C), logging every
-  call (`[MPU9250] ...`). It shares the ToF sensors' I2C bus; suggested
-  pins (INT, address) are documented in `mpu9250.h`.
 - **`pid.h`/`pid.cpp`** — a minimal generic PID controller (`pid_ctrl_t` +
   `pid_update()`), with anti-windup clamping on the integral term. One
   instance per control loop; gains are set/read independently at runtime
@@ -205,10 +178,18 @@ tools/
   tunable independently:
   - `CONTROL_LOOP_STRAIGHT` — dual-wheel encoder speed sync while driving
     forward (`control_run_straight(target_mm, ...)`).
-  - `CONTROL_LOOP_TURN` — gyro-integrated heading hold while pivoting
-    (`control_run_turn(target_deg, ...)`).
+  - `CONTROL_LOOP_TURN` — dual-wheel encoder arc-length sync while
+    pivoting (`control_run_turn(target_deg, ...)`) — no gyro on board, so
+    heading is tracked from how far each wheel has traveled instead of
+    integrated angular rate; see `turns.h`/`turns.cpp` for the simpler,
+    non-PID sibling maneuver this is built alongside.
   - `CONTROL_LOOP_WALLCENTER` — ToF left/right centering while driving
-    forward (`control_run_wallcenter(duration_ms, ...)`).
+    forward, either for a fixed duration (`control_run_wallcenter(duration_ms, ...)`)
+    or for a target distance measured via the wheel encoders
+    (`control_run_straight_centered(target_mm, ...)`) — the latter is
+    what `main.cpp`'s 2m run uses to stay balanced between the maze
+    walls over a multi-meter distance, bounded by the longer
+    `CONTROL_LONG_RUN_MS` ceiling instead of `CONTROL_MAX_RUN_MS`.
 
   Plus one open-loop maneuver not tied to a PID loop:
   `control_run_spin(motor, pwm, ...)` just holds one motor at a constant
@@ -255,14 +236,13 @@ tools/
 - **`solver.h`/`solver.cpp`** are the single-task hardware glue: `solver_run()`
   explores using `maze_flood_fill()` (senses walls with `sensor_read_all()` —
   a wall is "there" if a ToF reading is under `SOLVER_WALL_THRESHOLD_MM` —
-  and moves with `drive_forward()`/`drive_turn_left()`/`drive_turn_right()`
+  and moves with `control_run_straight()`/`turn_left_90()`/`turn_right_90()`
   in place of the simulator's `API_*` calls), the same
   search-to-center-then-return-to-start loop as `mms-c/Main.c`'s `main()`.
-  Movement is timed/open-loop by default (`SOLVER_CELL_MOVE_TIME_MS`,
-  `SOLVER_TURN_90_TIME_MS` — both untuned placeholders); once
-  `SOLVER_CELL_TICKS` is set to a measured ticks-per-cell value (derive it
-  from `control.h`'s now-measured `ENCODER_TICKS_PER_REV`/
-  `WHEEL_DIAMETER_MM`), it switches to counting encoder ticks instead. Not
+  Movement is closed-loop: each cell is driven with `control.h`'s
+  dual-wheel encoder PID (`control_run_straight(MAZE_CELL_SIZE_MM, ...)`)
+  and each pivot with `turns.h`'s encoder-measured turn, so both stop at
+  the actual measured distance/angle rather than a timed guess. Not
   active by default — select `main.cpp`'s `MODE_MAZE_SOLVER` to enable it.
 - **`tasks.h`/`tasks.cpp`** run the same overall solve as `solver.cpp` but
   split across the ESP32's two cores as separate FreeRTOS tasks, talking
@@ -273,9 +253,10 @@ tools/
     it only sends action requests (sense/move/turn) and reads back sensed
     walls.
   - **Control task (core 1)** owns all hardware I/O: it calls `sensor_init()`
-    itself on startup, then executes each requested action with
-    `drive_forward()`/`drive_turn_left()`/`drive_turn_right()` and reports
-    sensed walls back after every one.
+    itself on startup, then executes each requested action with the same
+    encoder-closed-loop `control_run_straight()`/`turn_left_90()`/
+    `turn_right_90()` calls as `solver.cpp`, and reports sensed walls back
+    after every one.
   During exploration the two necessarily hand off in lockstep (the next
   decision depends on what the last move sensed), but once the map is known
   the planning task computes the whole speed-run path up front — see the
@@ -291,7 +272,7 @@ tools/
   otherwise) and reflash. Current default: `MODE_SENSOR_TELEMETRY`
   (motors off, ToF sensors only, streamed as `DATA,` lines — for bench
   sensor tuning). Other modes: `MODE_MOTORS_ONLY`, `MODE_DRIVE_TEST`,
-  `MODE_OBSTACLE_AVOID`, `MODE_BATTERY_IMU_BRINGUP`, `MODE_MOTOR_PID_SYNC`,
+  `MODE_OBSTACLE_AVOID`, `MODE_BATTERY_BRINGUP`, `MODE_MOTOR_PID_SYNC`,
   `MODE_ENCODER_CALIBRATION`, `MODE_STRAIGHT_18CM`, `MODE_FULL_SEND_1M`
   (open-loop, full PWM, 1m straight-line stress test — see below),
   `MODE_MAZE_SOLVER`, and `MODE_MAZE_SOLVER_RTOS` — see each block's
@@ -351,16 +332,16 @@ hardware and most of it doesn't:
 
 - **`test/`** — host-native unit tests (PlatformIO + Unity) for the
   modules with zero Arduino/hardware dependency: `maze.cpp` (grid logic,
-  flood fill, Dijkstra planner), `pid.cpp` (generic controller math), and
-  `filter.cpp` (despike + EMA smoothing). Run them with:
+  flood fill, Dijkstra planner) and `pid.cpp` (generic controller math).
+  Run them with:
   ```
   pio test -e native
   ```
   No board needed — these compile and run directly on your machine (see
   `[env:native]` in `platformio.ini`, which restricts that environment's
-  `src/` build to just those three files via `build_src_filter`). Every
+  `src/` build to just those two files via `build_src_filter`). Every
   other module (`motor`, `sensor`, `drive`, `battery`, `encoder`,
-  `mpu9250`, `control`, `solver`, `tasks`, ...) calls into `Arduino.h`/real
+  `control`, `turns`, `solver`, `tasks`, ...) calls into `Arduino.h`/real
   peripherals somewhere in its call chain, so it can't be exercised this
   way without a hardware mock — not worth building for this project.
 

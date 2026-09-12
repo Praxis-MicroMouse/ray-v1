@@ -4,15 +4,12 @@
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
 
-#include "filter.h"
-
 // Base address used for the first sensor we bring up; the rest get
 // base+1, base+2 assigned before their XSHUT is released.
 #define SENSOR_I2C_ADDR_BASE 0x30
 #define SENSOR_MAX_RANGE_MM  2000
 
 static Adafruit_VL53L0X s_tof[SENSOR_COUNT];
-static filter_t s_filter[SENSOR_COUNT]; // despike + smooth each channel's raw readings - see filter.h
 static bool s_sensor_ok[SENSOR_COUNT] = { false, false, false };
 static const uint8_t s_xshut_pin[SENSOR_COUNT] = {
     SENSOR_XSHUT_FRONT,
@@ -51,7 +48,6 @@ bool sensor_init(void) {
     // Bring sensors up one at a time so each can be moved off the
     // default 0x29 address before the next one appears on the bus.
     for (int i = 0; i < SENSOR_COUNT; i++) {
-        filter_init(&s_filter[i]);
         s_sensor_ok[i] = false;
         digitalWrite(s_xshut_pin[i], HIGH);
         delay(10);
@@ -91,34 +87,27 @@ bool sensor_init(void) {
     return all_ok;
 }
 
-// Returns the despiked/smoothed reading (see filter.h) and, via
-// *in_range, whether the *raw* reading this call was actually in range -
-// tracked separately from the smoothed value so a sensor that's
-// genuinely out of range doesn't get reported as "valid" just because
-// its smoothed estimate hasn't finished climbing toward
-// SENSOR_MAX_RANGE_MM yet.
+// Returns the raw reading and, via *in_range, whether it was actually in
+// range.
 static uint16_t read_one(sensor_id_t id, bool *in_range) {
     if (!s_sensor_ok[id]) {
         // Never initialized (see sensor_init()'s presence probe) - don't
         // touch the VL53L0X instance at all, just report "out of range".
         *in_range = false;
-        return (uint16_t) filter_update(&s_filter[id], (float) SENSOR_MAX_RANGE_MM);
+        return SENSOR_MAX_RANGE_MM;
     }
 
     VL53L0X_RangingMeasurementData_t m;
     s_tof[id].rangingTest(&m, false);
 
-    float raw_mm;
     if (m.RangeStatus == 4) {
         Serial.printf("[SENSOR] %s out of range\n", s_name[id]);
-        raw_mm = SENSOR_MAX_RANGE_MM;
         *in_range = false;
-    } else {
-        raw_mm = m.RangeMilliMeter;
-        *in_range = true;
+        return SENSOR_MAX_RANGE_MM;
     }
 
-    return (uint16_t) filter_update(&s_filter[id], raw_mm);
+    *in_range = true;
+    return (uint16_t) m.RangeMilliMeter;
 }
 
 bool sensor_read_all(sensor_reading_t *out) {
